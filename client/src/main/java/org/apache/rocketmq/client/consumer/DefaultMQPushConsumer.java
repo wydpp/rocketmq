@@ -18,6 +18,7 @@ package org.apache.rocketmq.client.consumer;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import org.apache.rocketmq.client.ClientConfig;
 import org.apache.rocketmq.client.QueryResult;
@@ -184,7 +185,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * Consider the {@code pullBatchSize}, the instantaneous value may exceed the limit
      *
      * <p>
-     * The size of a message only measured by message body, so it's not accurate
+     * The size(MB) of a message only measured by message body, so it's not accurate
      */
     private int pullThresholdSizeForQueue = 100;
 
@@ -416,7 +417,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     @Override
     public void setUseTLS(boolean useTLS) {
         super.setUseTLS(useTLS);
-        if (traceDispatcher != null && traceDispatcher instanceof AsyncTraceDispatcher) {
+        if (traceDispatcher instanceof AsyncTraceDispatcher) {
             ((AsyncTraceDispatcher) traceDispatcher).getTraceProducer().setUseTLS(useTLS);
         }
     }
@@ -639,9 +640,9 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      */
     @Deprecated
     public void setSubscription(Map<String, String> subscription) {
-        Map<String, String> subscriptionWithNamespace = new HashMap<String, String>();
-        for (String topic : subscription.keySet()) {
-            subscriptionWithNamespace.put(withNamespace(topic), subscription.get(topic));
+        Map<String, String> subscriptionWithNamespace = new HashMap<String, String>(subscription.size(), 1);
+        for (Entry<String, String> topicEntry : subscription.entrySet()) {
+            subscriptionWithNamespace.put(withNamespace(topicEntry.getKey()), topicEntry.getValue());
         }
         this.subscription = subscriptionWithNamespace;
     }
@@ -859,10 +860,12 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
         this.postSubscriptionWhenPull = postSubscriptionWhenPull;
     }
 
+    @Override
     public boolean isUnitMode() {
         return unitMode;
     }
 
+    @Override
     public void setUnitMode(boolean isUnitMode) {
         this.unitMode = isUnitMode;
     }

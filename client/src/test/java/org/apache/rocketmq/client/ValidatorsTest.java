@@ -29,6 +29,16 @@ import static org.junit.Assert.fail;
 public class ValidatorsTest {
 
     @Test
+    public void testGroupNameBlank() {
+        try {
+            Validators.checkGroup(null);
+            fail("excepted MQClientException for group name is blank");
+        } catch (MQClientException e) {
+            assertThat(e.getErrorMessage()).isEqualTo("the specified group is blank");
+        }
+    }
+    
+    @Test
     public void testCheckTopic_Success() throws MQClientException {
         Validators.checkTopic("Hello");
         Validators.checkTopic("%RETRY%Hello");
@@ -44,7 +54,7 @@ public class ValidatorsTest {
             Validators.checkTopic(illegalTopic);
             failBecauseExceptionWasNotThrown(MQClientException.class);
         } catch (MQClientException e) {
-            assertThat(e).hasMessageStartingWith(String.format("The specified topic[%s] contains illegal characters, allowing only %s", illegalTopic, Validators.VALID_PATTERN_STR));
+            assertThat(e).hasMessageStartingWith(String.format("The specified topic[%s] contains illegal characters, allowing only %s", illegalTopic, "^[%|a-zA-Z0-9_-]+$"));
         }
     }
 
