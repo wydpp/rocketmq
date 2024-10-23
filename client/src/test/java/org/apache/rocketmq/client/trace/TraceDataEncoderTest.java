@@ -17,6 +17,7 @@
 
 package org.apache.rocketmq.client.trace;
 
+import org.apache.rocketmq.client.AccessChannel;
 import org.apache.rocketmq.client.producer.LocalTransactionState;
 import org.apache.rocketmq.common.message.MessageType;
 import org.junit.Assert;
@@ -82,7 +83,7 @@ public class TraceDataEncoderTest {
         traceBean.setStoreTime(time);
         traceBean.setMsgType(MessageType.Normal_Msg);
         traceBean.setBodyLength(26);
-        List<TraceBean> traceBeans = new ArrayList<TraceBean>();
+        List<TraceBean> traceBeans = new ArrayList<>();
         traceBeans.add(traceBean);
         context.setTraceBeans(traceBeans);
         TraceTransferBean traceTransferBean = TraceDataEncoder.encoderFromContextBean(context);
@@ -108,7 +109,7 @@ public class TraceDataEncoderTest {
         traceBean.setTransactionId("transactionId");
         traceBean.setTransactionState(LocalTransactionState.COMMIT_MESSAGE);
         traceBean.setFromTransactionCheck(false);
-        List<TraceBean> traceBeans = new ArrayList<TraceBean>();
+        List<TraceBean> traceBeans = new ArrayList<>();
         traceBeans.add(traceBean);
         context.setTraceBeans(traceBeans);
         TraceTransferBean traceTransferBean = TraceDataEncoder.encoderFromContextBean(context);
@@ -151,7 +152,7 @@ public class TraceDataEncoderTest {
         bean.setBodyLength(100);
         bean.setMsgType(MessageType.Normal_Msg);
         bean.setOffsetMsgId("AC1415116D1418B4AAC217FE1B4E0000");
-        pubContext.setTraceBeans(new ArrayList<TraceBean>(1));
+        pubContext.setTraceBeans(new ArrayList<>(1));
         pubContext.getTraceBeans().add(bean);
 
         TraceTransferBean traceTransferBean = TraceDataEncoder.encoderFromContextBean(pubContext);
@@ -174,7 +175,7 @@ public class TraceDataEncoderTest {
         bean.setMsgId("AC1415116D1418B4AAC217FE1B4E0000");
         bean.setRetryTimes(0);
         bean.setKeys("keys");
-        subBeforeContext.setTraceBeans(new ArrayList<TraceBean>(1));
+        subBeforeContext.setTraceBeans(new ArrayList<>(1));
         subBeforeContext.getTraceBeans().add(bean);
 
         TraceTransferBean traceTransferBean = TraceDataEncoder.encoderFromContextBean(subBeforeContext);
@@ -195,10 +196,11 @@ public class TraceDataEncoderTest {
         subAfterContext.setTimeStamp(1625883640000L);
         subAfterContext.setGroupName("GroupName-test");
         subAfterContext.setContextCode(98623046);
+        subAfterContext.setAccessChannel(AccessChannel.LOCAL);
         TraceBean bean = new TraceBean();
         bean.setMsgId("AC1415116D1418B4AAC217FE1B4E0000");
         bean.setKeys("keys");
-        subAfterContext.setTraceBeans(new ArrayList<TraceBean>(1));
+        subAfterContext.setTraceBeans(new ArrayList<>(1));
         subAfterContext.getTraceBeans().add(bean);
 
         TraceTransferBean traceTransferBean = TraceDataEncoder.encoderFromContextBean(subAfterContext);
@@ -226,7 +228,7 @@ public class TraceDataEncoderTest {
         endTrxTraceBean.setTransactionId("transactionId");
         endTrxTraceBean.setTransactionState(LocalTransactionState.COMMIT_MESSAGE);
         endTrxTraceBean.setFromTransactionCheck(false);
-        List<TraceBean> traceBeans = new ArrayList<TraceBean>();
+        List<TraceBean> traceBeans = new ArrayList<>();
         traceBeans.add(endTrxTraceBean);
         endTrxContext.setTraceBeans(traceBeans);
 
@@ -255,7 +257,7 @@ public class TraceDataEncoderTest {
         endTrxTraceBean.setTransactionId("transactionId");
         endTrxTraceBean.setTransactionState(LocalTransactionState.COMMIT_MESSAGE);
         endTrxTraceBean.setFromTransactionCheck(false);
-        List<TraceBean> traceBeans = new ArrayList<TraceBean>();
+        List<TraceBean> traceBeans = new ArrayList<>();
         traceBeans.add(endTrxTraceBean);
         endTrxContext.setTraceBeans(traceBeans);
 

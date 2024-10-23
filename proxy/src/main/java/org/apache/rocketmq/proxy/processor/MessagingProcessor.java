@@ -33,17 +33,19 @@ import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
 import org.apache.rocketmq.common.consumer.ReceiptHandle;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.heartbeat.ConsumeType;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
-import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.proxy.common.Address;
+import org.apache.rocketmq.proxy.common.MessageReceiptHandle;
 import org.apache.rocketmq.proxy.common.ProxyContext;
-import org.apache.rocketmq.proxy.common.StartAndShutdown;
+import org.apache.rocketmq.common.utils.StartAndShutdown;
+import org.apache.rocketmq.proxy.service.message.ReceiptHandleMessage;
 import org.apache.rocketmq.proxy.service.metadata.MetadataService;
 import org.apache.rocketmq.proxy.service.relay.ProxyRelayService;
 import org.apache.rocketmq.proxy.service.route.ProxyTopicRouteData;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.heartbeat.ConsumeType;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 
 public interface MessagingProcessor extends StartAndShutdown {
 
@@ -131,6 +133,7 @@ public interface MessagingProcessor extends StartAndShutdown {
         SubscriptionData subscriptionData,
         boolean fifo,
         PopMessageResultFilter popMessageResultFilter,
+        String attemptId,
         long timeoutMillis
     );
 
@@ -148,6 +151,23 @@ public interface MessagingProcessor extends StartAndShutdown {
         ProxyContext ctx,
         ReceiptHandle handle,
         String messageId,
+        String consumerGroup,
+        String topic,
+        long timeoutMillis
+    );
+
+    default CompletableFuture<List<BatchAckResult>> batchAckMessage(
+        ProxyContext ctx,
+        List<ReceiptHandleMessage> handleMessageList,
+        String consumerGroup,
+        String topic
+    ) {
+        return batchAckMessage(ctx, handleMessageList, consumerGroup, topic, DEFAULT_TIMEOUT_MILLS);
+    }
+
+    CompletableFuture<List<BatchAckResult>> batchAckMessage(
+        ProxyContext ctx,
+        List<ReceiptHandleMessage> handleMessageList,
         String consumerGroup,
         String topic,
         long timeoutMillis
@@ -230,6 +250,12 @@ public interface MessagingProcessor extends StartAndShutdown {
         long timeoutMillis
     );
 
+    CompletableFuture<RemotingCommand> request(ProxyContext ctx, String brokerName, RemotingCommand request,
+        long timeoutMillis);
+
+    CompletableFuture<Void> requestOneway(ProxyContext ctx, String brokerName, RemotingCommand request,
+        long timeoutMillis);
+
     void registerProducer(
         ProxyContext ctx,
         String producerGroup,
@@ -266,7 +292,7 @@ public interface MessagingProcessor extends StartAndShutdown {
     ClientChannelInfo findConsumerChannel(
         ProxyContext ctx,
         String consumerGroup,
-        String clientId
+        Channel channel
     );
 
     void unRegisterConsumer(
@@ -279,7 +305,9 @@ public interface MessagingProcessor extends StartAndShutdown {
         ConsumerIdsChangeListener consumerIdsChangeListener
     );
 
-    ConsumerGroupInfo getConsumerGroupInfo(String consumerGroup);
+    void doChannelCloseEvent(String remoteAddr, Channel channel);
+
+    ConsumerGroupInfo getConsumerGroupInfo(ProxyContext ctx, String consumerGroup);
 
     void addTransactionSubscription(
         ProxyContext ctx,
@@ -290,4 +318,8 @@ public interface MessagingProcessor extends StartAndShutdown {
     ProxyRelayService getProxyRelayService();
 
     MetadataService getMetadataService();
+
+    void addReceiptHandle(ProxyContext ctx, Channel channel, String group, String msgID, MessageReceiptHandle messageReceiptHandle);
+
+    MessageReceiptHandle removeReceiptHandle(ProxyContext ctx, Channel channel, String group, String msgID, String receiptHandle);
 }

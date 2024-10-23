@@ -41,18 +41,19 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import org.apache.rocketmq.broker.client.ClientChannelInfo;
 import org.apache.rocketmq.common.attribute.TopicMessageType;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.body.CMResult;
-import org.apache.rocketmq.common.protocol.body.ConsumeMessageDirectlyResult;
-import org.apache.rocketmq.common.protocol.body.ConsumerRunningInfo;
-import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
 import org.apache.rocketmq.proxy.common.ProxyContext;
 import org.apache.rocketmq.proxy.grpc.v2.BaseActivityTest;
+import org.apache.rocketmq.proxy.grpc.v2.ContextStreamObserver;
 import org.apache.rocketmq.proxy.grpc.v2.channel.GrpcChannelManager;
 import org.apache.rocketmq.proxy.grpc.v2.channel.GrpcClientChannel;
 import org.apache.rocketmq.proxy.grpc.v2.common.ResponseBuilder;
 import org.apache.rocketmq.proxy.service.relay.ProxyRelayResult;
 import org.apache.rocketmq.remoting.protocol.LanguageCode;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.body.CMResult;
+import org.apache.rocketmq.remoting.protocol.body.ConsumeMessageDirectlyResult;
+import org.apache.rocketmq.remoting.protocol.body.ConsumerRunningInfo;
+import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 import org.assertj.core.util.Lists;
 import org.junit.Before;
 import org.junit.Test;
@@ -134,7 +135,7 @@ public class ClientActivityTest extends BaseActivityTest {
             txProducerTopicArgumentCaptor.capture()
         );
 
-        when(this.metadataService.getTopicMessageType(anyString())).thenReturn(TopicMessageType.TRANSACTION);
+        when(this.metadataService.getTopicMessageType(any(), anyString())).thenReturn(TopicMessageType.TRANSACTION);
 
         HeartbeatResponse response = this.sendProducerHeartbeat(context);
 
@@ -208,7 +209,6 @@ public class ClientActivityTest extends BaseActivityTest {
         GrpcClientChannel channel = (GrpcClientChannel) clientChannelInfo.getChannel();
         assertEquals(REMOTE_ADDR, channel.getRemoteAddress());
         assertEquals(LOCAL_ADDR, channel.getLocalAddress());
-        assertEquals(group, channel.getGroup());
     }
 
     @Test
@@ -223,7 +223,7 @@ public class ClientActivityTest extends BaseActivityTest {
             .build());
         ArgumentCaptor<ClientChannelInfo> channelInfoArgumentCaptor = ArgumentCaptor.forClass(ClientChannelInfo.class);
         doNothing().when(this.messagingProcessor).unRegisterProducer(any(), anyString(), channelInfoArgumentCaptor.capture());
-        when(this.metadataService.getTopicMessageType(anyString())).thenReturn(TopicMessageType.NORMAL);
+        when(this.metadataService.getTopicMessageType(any(), anyString())).thenReturn(TopicMessageType.NORMAL);
 
         this.sendProducerTelemetry(context);
         this.sendProducerHeartbeat(context);
@@ -323,13 +323,26 @@ public class ClientActivityTest extends BaseActivityTest {
     }
 
     @Test
+    public void testEmptyProducerSettings() throws Throwable {
+        ProxyContext context = createContext();
+        TelemetryCommand command = this.sendClientTelemetry(
+            context,
+            Settings.newBuilder()
+                .setClientType(ClientType.PRODUCER)
+                .setPublishing(Publishing.getDefaultInstance())
+                .build()).get();
+        assertTrue(command.hasSettings());
+        assertTrue(command.getSettings().hasPublishing());
+    }
+
+    @Test
     public void testReportThreadStackTrace() {
         this.clientActivity = new ClientActivity(this.messagingProcessor, this.grpcClientSettingsManager, grpcChannelManagerMock);
         String jstack = "jstack";
         String nonce = "123";
         when(grpcChannelManagerMock.getAndRemoveResponseFuture(anyString())).thenReturn((CompletableFuture) runningInfoFutureMock);
         ProxyContext context = createContext();
-        StreamObserver<TelemetryCommand> streamObserver = clientActivity.telemetry(context, new StreamObserver<TelemetryCommand>() {
+        ContextStreamObserver<TelemetryCommand> streamObserver = clientActivity.telemetry(new StreamObserver<TelemetryCommand>() {
             @Override
             public void onNext(TelemetryCommand value) {
             }
@@ -342,7 +355,7 @@ public class ClientActivityTest extends BaseActivityTest {
             public void onCompleted() {
             }
         });
-        streamObserver.onNext(TelemetryCommand.newBuilder()
+        streamObserver.onNext(context, TelemetryCommand.newBuilder()
             .setThreadStackTrace(ThreadStackTrace.newBuilder()
                 .setThreadStackTrace(jstack)
                 .setNonce(nonce)
@@ -361,7 +374,7 @@ public class ClientActivityTest extends BaseActivityTest {
         String nonce = "123";
         when(grpcChannelManagerMock.getAndRemoveResponseFuture(anyString())).thenReturn((CompletableFuture) resultFutureMock);
         ProxyContext context = createContext();
-        StreamObserver<TelemetryCommand> streamObserver = clientActivity.telemetry(context, new StreamObserver<TelemetryCommand>() {
+        ContextStreamObserver<TelemetryCommand> streamObserver = clientActivity.telemetry(new StreamObserver<TelemetryCommand>() {
             @Override
             public void onNext(TelemetryCommand value) {
             }
@@ -374,7 +387,7 @@ public class ClientActivityTest extends BaseActivityTest {
             public void onCompleted() {
             }
         });
-        streamObserver.onNext(TelemetryCommand.newBuilder()
+        streamObserver.onNext(context, TelemetryCommand.newBuilder()
             .setVerifyMessageResult(VerifyMessageResult.newBuilder()
                 .setNonce(nonce)
                 .build())
@@ -406,11 +419,8 @@ public class ClientActivityTest extends BaseActivityTest {
 
             }
         };
-        StreamObserver<TelemetryCommand> requestObserver = this.clientActivity.telemetry(
-            ctx,
-            responseObserver
-        );
-        requestObserver.onNext(TelemetryCommand.newBuilder()
+        ContextStreamObserver<TelemetryCommand> requestObserver = this.clientActivity.telemetry(responseObserver);
+        requestObserver.onNext(ctx, TelemetryCommand.newBuilder()
             .setSettings(settings)
             .build());
         return future;

@@ -27,16 +27,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.rocketmq.common.consumer.ReceiptHandle;
 import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.proxy.common.utils.FutureUtils;
-import org.apache.rocketmq.proxy.config.InitConfigAndLoggerTest;
+import org.apache.rocketmq.proxy.config.InitConfigTest;
 import org.junit.Before;
 import org.junit.Test;
 
 import static org.awaitility.Awaitility.await;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-public class ReceiptHandleGroupTest extends InitConfigAndLoggerTest {
+public class ReceiptHandleGroupTest extends InitConfigTest {
 
     private static final String TOPIC = "topic";
     private static final String GROUP = "group";
@@ -66,12 +67,119 @@ public class ReceiptHandleGroupTest extends InitConfigAndLoggerTest {
     }
 
     @Test
+    public void testAddDuplicationHandle() {
+        String handle1 = ReceiptHandle.builder()
+            .startOffset(0L)
+            .retrieveTime(System.currentTimeMillis())
+            .invisibleTime(3000)
+            .reviveQueueId(1)
+            .topicType(ReceiptHandle.NORMAL_TOPIC)
+            .brokerName("brokerName")
+            .queueId(1)
+            .offset(123)
+            .commitLogOffset(0L)
+            .build().encode();
+        String handle2 = ReceiptHandle.builder()
+            .startOffset(0L)
+            .retrieveTime(System.currentTimeMillis() + 1000)
+            .invisibleTime(3000)
+            .reviveQueueId(1)
+            .topicType(ReceiptHandle.NORMAL_TOPIC)
+            .brokerName("brokerName")
+            .queueId(1)
+            .offset(123)
+            .commitLogOffset(0L)
+            .build().encode();
+
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle2, msgID));
+
+        assertEquals(1, receiptHandleGroup.receiptHandleMap.get(msgID).size());
+    }
+
+    @Test
+    public void testGetWhenComputeIfPresent() {
+        String handle1 = createHandle();
+        String handle2 = createHandle();
+        AtomicReference<MessageReceiptHandle> getHandleRef = new AtomicReference<>();
+
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
+        CountDownLatch latch = new CountDownLatch(2);
+        Thread getThread = new Thread(() -> {
+            try {
+                latch.countDown();
+                latch.await();
+                getHandleRef.set(receiptHandleGroup.get(msgID, handle1));
+            } catch (Exception ignored) {
+            }
+        }, "getThread");
+        Thread computeThread = new Thread(() -> {
+            try {
+                receiptHandleGroup.computeIfPresent(msgID, handle1, messageReceiptHandle -> {
+                    try {
+                        latch.countDown();
+                        latch.await();
+                    } catch (Exception ignored) {
+                    }
+                    messageReceiptHandle.updateReceiptHandle(handle2);
+                    return FutureUtils.addExecutor(CompletableFuture.completedFuture(messageReceiptHandle), Executors.newCachedThreadPool());
+                });
+            } catch (Exception ignored) {
+            }
+        }, "computeThread");
+        getThread.start();
+        computeThread.start();
+
+        await().atMost(Duration.ofSeconds(1)).until(() -> getHandleRef.get() != null);
+        assertEquals(handle2, getHandleRef.get().getReceiptHandleStr());
+        assertFalse(receiptHandleGroup.isEmpty());
+    }
+
+    @Test
+    public void testGetWhenComputeIfPresentReturnNull() {
+        String handle1 = createHandle();
+        AtomicBoolean getCalled = new AtomicBoolean(false);
+        AtomicReference<MessageReceiptHandle> getHandleRef = new AtomicReference<>();
+
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
+        CountDownLatch latch = new CountDownLatch(2);
+        Thread getThread = new Thread(() -> {
+            try {
+                latch.countDown();
+                latch.await();
+                getHandleRef.set(receiptHandleGroup.get(msgID, handle1));
+                getCalled.set(true);
+            } catch (Exception ignored) {
+            }
+        }, "getThread");
+        Thread computeThread = new Thread(() -> {
+            try {
+                receiptHandleGroup.computeIfPresent(msgID, handle1, messageReceiptHandle -> {
+                    try {
+                        latch.countDown();
+                        latch.await();
+                    } catch (Exception ignored) {
+                    }
+                    return FutureUtils.addExecutor(CompletableFuture.completedFuture(null), Executors.newCachedThreadPool());
+                });
+            } catch (Exception ignored) {
+            }
+        }, "computeThread");
+        getThread.start();
+        computeThread.start();
+
+        await().atMost(Duration.ofSeconds(1)).until(getCalled::get);
+        assertNull(getHandleRef.get());
+        assertTrue(receiptHandleGroup.isEmpty());
+    }
+
+    @Test
     public void testRemoveWhenComputeIfPresent() {
         String handle1 = createHandle();
         String handle2 = createHandle();
         AtomicReference<MessageReceiptHandle> removeHandleRef = new AtomicReference<>();
 
-        receiptHandleGroup.put(msgID, handle1, createMessageReceiptHandle(handle1, msgID));
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
         CountDownLatch latch = new CountDownLatch(2);
         Thread removeThread = new Thread(() -> {
             try {
@@ -109,7 +217,7 @@ public class ReceiptHandleGroupTest extends InitConfigAndLoggerTest {
         AtomicBoolean removeCalled = new AtomicBoolean(false);
         AtomicReference<MessageReceiptHandle> removeHandleRef = new AtomicReference<>();
 
-        receiptHandleGroup.put(msgID, handle1, createMessageReceiptHandle(handle1, msgID));
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
         CountDownLatch latch = new CountDownLatch(2);
         Thread removeThread = new Thread(() -> {
             try {
@@ -147,7 +255,7 @@ public class ReceiptHandleGroupTest extends InitConfigAndLoggerTest {
         AtomicReference<MessageReceiptHandle> removeHandleRef = new AtomicReference<>();
         AtomicInteger count = new AtomicInteger();
 
-        receiptHandleGroup.put(msgID, handle1, createMessageReceiptHandle(handle1, msgID));
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
         int threadNum = Math.max(Runtime.getRuntime().availableProcessors(), 3);
         CountDownLatch latch = new CountDownLatch(threadNum);
         for (int i = 0; i < threadNum; i++) {
@@ -156,6 +264,36 @@ public class ReceiptHandleGroupTest extends InitConfigAndLoggerTest {
                     latch.countDown();
                     latch.await();
                     MessageReceiptHandle handle = receiptHandleGroup.remove(msgID, handle1);
+                    if (handle != null) {
+                        removeHandleRef.set(handle);
+                        count.incrementAndGet();
+                    }
+                } catch (Exception ignored) {
+                }
+            });
+            thread.start();
+        }
+
+        await().atMost(Duration.ofSeconds(1)).untilAsserted(() -> assertEquals(1, count.get()));
+        assertEquals(handle1, removeHandleRef.get().getReceiptHandleStr());
+        assertTrue(receiptHandleGroup.isEmpty());
+    }
+
+    @Test
+    public void testRemoveOne() {
+        String handle1 = createHandle();
+        AtomicReference<MessageReceiptHandle> removeHandleRef = new AtomicReference<>();
+        AtomicInteger count = new AtomicInteger();
+
+        receiptHandleGroup.put(msgID, createMessageReceiptHandle(handle1, msgID));
+        int threadNum = Math.max(Runtime.getRuntime().availableProcessors(), 3);
+        CountDownLatch latch = new CountDownLatch(threadNum);
+        for (int i = 0; i < threadNum; i++) {
+            Thread thread = new Thread(() -> {
+                try {
+                    latch.countDown();
+                    latch.await();
+                    MessageReceiptHandle handle = receiptHandleGroup.removeOne(msgID);
                     if (handle != null) {
                         removeHandleRef.set(handle);
                         count.incrementAndGet();

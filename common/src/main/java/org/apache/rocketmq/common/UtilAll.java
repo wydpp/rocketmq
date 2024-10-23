@@ -16,20 +16,18 @@
  */
 package org.apache.rocketmq.common;
 
+import io.netty.util.internal.PlatformDependent;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.nio.ByteBuffer;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
+import java.nio.file.Files;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -40,48 +38,59 @@ import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.zip.CRC32;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterInputStream;
-import org.apache.commons.lang3.JavaVersion;
-import org.apache.commons.lang3.SystemUtils;
+import java.util.Collections;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.validator.routines.InetAddressValidator;
 import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.remoting.common.RemotingHelper;
-import sun.misc.Unsafe;
-import sun.nio.ch.DirectBuffer;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 
 public class UtilAll {
-    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
-    private static final InternalLogger STORE_LOG = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
-
+    private static final Logger log = LoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
+    private static final Logger STORE_LOG = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
     public static final String YYYY_MM_DD_HH_MM_SS = "yyyy-MM-dd HH:mm:ss";
     public static final String YYYY_MM_DD_HH_MM_SS_SSS = "yyyy-MM-dd#HH:mm:ss:SSS";
     public static final String YYYYMMDDHHMMSS = "yyyyMMddHHmmss";
-    final static char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
-    final static String HOST_NAME = ManagementFactory.getRuntimeMXBean().getName(); // format: "pid@hostname"
+    private final static char[] HEX_ARRAY;
+    private final static int PID;
+
+    static {
+        HEX_ARRAY = "0123456789ABCDEF".toCharArray();
+        Supplier<Integer> supplier = () -> {
+            // format: "pid@hostname"
+            String currentJVM = ManagementFactory.getRuntimeMXBean().getName();
+            try {
+                return Integer.parseInt(currentJVM.substring(0, currentJVM.indexOf('@')));
+            } catch (Exception e) {
+                return -1;
+            }
+        };
+        PID = supplier.get();
+    }
 
     public static int getPid() {
-        try {
-            return Integer.parseInt(HOST_NAME.substring(0, HOST_NAME.indexOf('@')));
-        } catch (Exception e) {
-            return -1;
-        }
+        return PID;
     }
 
     public static void sleep(long sleepMs) {
-        if (sleepMs < 0) {
+        sleep(sleepMs, TimeUnit.MILLISECONDS);
+    }
+
+    public static void sleep(long timeOut, TimeUnit timeUnit) {
+        if (null == timeUnit) {
             return;
         }
         try {
-            Thread.sleep(sleepMs);
+            timeUnit.sleep(timeOut);
         } catch (Throwable ignored) {
 
         }
-
     }
 
     public static String currentStackTrace() {
@@ -214,7 +223,7 @@ public class UtilAll {
             File file = new File(path);
             if (!file.exists())
                 return -1;
-            return  file.getTotalSpace();
+            return file.getTotalSpace();
         } catch (Exception e) {
             return -1;
         }
@@ -230,7 +239,6 @@ public class UtilAll {
             STORE_LOG.error("Error when measuring disk space usage, path is null or empty, path : {}", path);
             return -1;
         }
-
 
         try {
             File file = new File(path);
@@ -269,12 +277,11 @@ public class UtilAll {
         try {
             File file = new File(path);
 
-
             if (!file.exists()) {
                 return -1;
             }
 
-            return file.getTotalSpace() -  file.getFreeSpace() + file.getUsableSpace();
+            return file.getTotalSpace() - file.getFreeSpace() + file.getUsableSpace();
         } catch (Exception e) {
             return -1;
         }
@@ -291,6 +298,20 @@ public class UtilAll {
     public static int crc32(byte[] array, int offset, int length) {
         CRC32 crc32 = new CRC32();
         crc32.update(array, offset, length);
+        return (int) (crc32.getValue() & 0x7FFFFFFF);
+    }
+
+    public static int crc32(ByteBuffer byteBuffer) {
+        CRC32 crc32 = new CRC32();
+        crc32.update(byteBuffer);
+        return (int) (crc32.getValue() & 0x7FFFFFFF);
+    }
+
+    public static int crc32(ByteBuffer[] byteBuffers) {
+        CRC32 crc32 = new CRC32();
+        for (ByteBuffer buffer : byteBuffers) {
+            crc32.update(buffer);
+        }
         return (int) (crc32.getValue() & 0x7FFFFFFF);
     }
 
@@ -455,16 +476,7 @@ public class UtilAll {
     }
 
     public static boolean isBlank(String str) {
-        int strLen;
-        if (str == null || (strLen = str.length()) == 0) {
-            return true;
-        }
-        for (int i = 0; i < strLen; i++) {
-            if (!Character.isWhitespace(str.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
+        return StringUtils.isBlank(str);
     }
 
     public static String jstack() {
@@ -489,10 +501,25 @@ public class UtilAll {
                 }
             }
         } catch (Throwable e) {
-            result.append(RemotingHelper.exceptionSimpleDesc(e));
+            result.append(exceptionSimpleDesc(e));
         }
 
         return result.toString();
+    }
+
+    public static String exceptionSimpleDesc(final Throwable e) {
+        StringBuilder sb = new StringBuilder();
+        if (e != null) {
+            sb.append(e);
+
+            StackTraceElement[] stackTrace = e.getStackTrace();
+            if (stackTrace != null && stackTrace.length > 0) {
+                StackTraceElement element = stackTrace[0];
+                sb.append(", ");
+                sb.append(element.toString());
+            }
+        }
+        return sb.toString();
     }
 
     public static boolean isInternalIP(byte[] ip) {
@@ -503,8 +530,10 @@ public class UtilAll {
         //10.0.0.0~10.255.255.255
         //172.16.0.0~172.31.255.255
         //192.168.0.0~192.168.255.255
+        //127.0.0.0~127.255.255.255
         if (ip[0] == (byte) 10) {
-
+            return true;
+        } else if (ip[0] == (byte) 127) {
             return true;
         } else if (ip[0] == (byte) 172) {
             if (ip[1] >= (byte) 16 && ip[1] <= (byte) 31) {
@@ -551,7 +580,7 @@ public class UtilAll {
             return null;
         }
         return new StringBuilder().append(ip[0] & 0xFF).append(".").append(
-            ip[1] & 0xFF).append(".").append(ip[2] & 0xFF)
+                ip[1] & 0xFF).append(".").append(ip[2] & 0xFF)
             .append(".").append(ip[3] & 0xFF).toString();
     }
 
@@ -590,7 +619,7 @@ public class UtilAll {
                             if (ipCheck(ipByte)) {
                                 if (!isInternalIP(ipByte)) {
                                     return ipByte;
-                                } else if (internalIP == null) {
+                                } else if (internalIP == null || internalIP[0] == (byte) 127) {
                                     internalIP = ipByte;
                                 }
                             }
@@ -653,6 +682,10 @@ public class UtilAll {
             return null;
         }
 
+        if (StringUtils.isBlank(str)) {
+            return Collections.EMPTY_LIST;
+        }
+
         String[] addrArray = str.split(splitter);
         return Arrays.asList(addrArray);
     }
@@ -671,58 +704,20 @@ public class UtilAll {
         }
     }
 
+    /**
+     * Free direct-buffer's memory actively.
+     * @param buffer Direct buffer to free.
+     */
     public static void cleanBuffer(final ByteBuffer buffer) {
-        if (buffer == null || !buffer.isDirect() || buffer.capacity() == 0) {
+        if (null == buffer) {
             return;
         }
-        if (SystemUtils.isJavaVersionAtLeast(JavaVersion.JAVA_9)) {
-            try {
-                Field field = Unsafe.class.getDeclaredField("theUnsafe");
-                field.setAccessible(true);
-                Unsafe unsafe = (Unsafe) field.get(null);
-                Method cleaner = method(unsafe, "invokeCleaner", new Class[] {ByteBuffer.class});
-                cleaner.invoke(unsafe, viewed(buffer));
-            } catch (Exception e) {
-                throw new IllegalStateException(e);
-            }
-        } else {
-            invoke(invoke(viewed(buffer), "cleaner"), "clean");
-        }
-    }
 
-    public static Object invoke(final Object target, final String methodName, final Class<?>... args) {
-        return AccessController.doPrivileged(new PrivilegedAction<Object>() {
-            @Override
-            public Object run() {
-                try {
-                    Method method = method(target, methodName, args);
-                    method.setAccessible(true);
-                    return method.invoke(target);
-                } catch (Exception e) {
-                    throw new IllegalStateException(e);
-                }
-            }
-        });
-    }
-
-    public static Method method(Object target, String methodName, Class<?>[] args) throws NoSuchMethodException {
-        try {
-            return target.getClass().getMethod(methodName, args);
-        } catch (NoSuchMethodException e) {
-            return target.getClass().getDeclaredMethod(methodName, args);
-        }
-    }
-
-    private static ByteBuffer viewed(ByteBuffer buffer) {
         if (!buffer.isDirect()) {
-            throw new IllegalArgumentException("buffer is non-direct");
+            return;
         }
-        ByteBuffer viewedBuffer = (ByteBuffer) ((DirectBuffer) buffer).attachment();
-        if (viewedBuffer == null) {
-            return buffer;
-        } else {
-            return viewed(viewedBuffer);
-        }
+
+        PlatformDependent.freeDirectBuffer(buffer);
     }
 
     public static void ensureDirOK(final String dirName) {
@@ -738,11 +733,37 @@ public class UtilAll {
         }
     }
 
-    private static void  createDirIfNotExist(String dirName) {
+    private static void createDirIfNotExist(String dirName) {
         File f = new File(dirName);
         if (!f.exists()) {
             boolean result = f.mkdirs();
             STORE_LOG.info(dirName + " mkdir " + (result ? "OK" : "Failed"));
         }
+    }
+
+    public static long calculateFileSizeInPath(File path) {
+        long size = 0;
+        try {
+            if (!path.exists() || Files.isSymbolicLink(path.toPath())) {
+                return 0;
+            }
+            if (path.isFile()) {
+                return path.length();
+            }
+            if (path.isDirectory()) {
+                File[] files = path.listFiles();
+                if (files != null && files.length > 0) {
+                    for (File file : files) {
+                        long fileSize = calculateFileSizeInPath(file);
+                        if (fileSize == -1) return -1;
+                        size += fileSize;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("calculate all file size in: {} error", path.getAbsolutePath(), e);
+            return -1;
+        }
+        return size;
     }
 }

@@ -22,8 +22,8 @@ import apache.rocketmq.v2.AddressScheme;
 import apache.rocketmq.v2.Broker;
 import apache.rocketmq.v2.Code;
 import apache.rocketmq.v2.Endpoints;
-import apache.rocketmq.v2.MessageType;
 import apache.rocketmq.v2.MessageQueue;
+import apache.rocketmq.v2.MessageType;
 import apache.rocketmq.v2.Permission;
 import apache.rocketmq.v2.QueryAssignmentRequest;
 import apache.rocketmq.v2.QueryAssignmentResponse;
@@ -36,14 +36,15 @@ import java.util.List;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.common.attribute.TopicMessageType;
 import org.apache.rocketmq.common.constant.PermName;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.route.QueueData;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
 import org.apache.rocketmq.proxy.grpc.v2.BaseActivityTest;
 import org.apache.rocketmq.proxy.grpc.v2.common.ResponseBuilder;
 import org.apache.rocketmq.proxy.service.metadata.LocalMetadataService;
 import org.apache.rocketmq.proxy.service.metadata.MetadataService;
 import org.apache.rocketmq.proxy.service.route.ProxyTopicRouteData;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.route.QueueData;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -100,7 +101,7 @@ public class RouteActivityTest extends BaseActivityTest {
             .thenReturn(createProxyTopicRouteData(2, 2, 6));
         MetadataService metadataService = Mockito.mock(LocalMetadataService.class);
         when(this.messagingProcessor.getMetadataService()).thenReturn(metadataService);
-        when(metadataService.getTopicMessageType(anyString())).thenReturn(TopicMessageType.NORMAL);
+        when(metadataService.getTopicMessageType(any(), anyString())).thenReturn(TopicMessageType.NORMAL);
 
         QueryRouteResponse response = this.routeActivity.queryRoute(
             createContext(),
@@ -188,6 +189,28 @@ public class RouteActivityTest extends BaseActivityTest {
 
         assertEquals(Code.OK, response.getStatus().getCode());
         assertEquals(1, response.getAssignmentsCount());
+        assertEquals(grpcEndpoints, response.getAssignments(0).getMessageQueue().getBroker().getEndpoints());
+    }
+
+    @Test
+    public void testQueryFifoAssignment() throws Throwable {
+        when(this.messagingProcessor.getTopicRouteDataForProxy(any(), any(), anyString()))
+            .thenReturn(createProxyTopicRouteData(2, 2, 6));
+        SubscriptionGroupConfig subscriptionGroupConfig = new SubscriptionGroupConfig();
+        subscriptionGroupConfig.setConsumeMessageOrderly(true);
+        when(this.messagingProcessor.getSubscriptionGroupConfig(any(), anyString())).thenReturn(subscriptionGroupConfig);
+
+        QueryAssignmentResponse response = this.routeActivity.queryAssignment(
+            createContext(),
+            QueryAssignmentRequest.newBuilder()
+                .setEndpoints(grpcEndpoints)
+                .setTopic(GRPC_TOPIC)
+                .setGroup(GRPC_GROUP)
+                .build()
+        ).get();
+
+        assertEquals(Code.OK, response.getStatus().getCode());
+        assertEquals(2, response.getAssignmentsCount());
         assertEquals(grpcEndpoints, response.getAssignments(0).getMessageQueue().getBroker().getEndpoints());
     }
 

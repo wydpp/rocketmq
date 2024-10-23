@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.common.BrokerConfig;
 import org.apache.rocketmq.common.KeyBuilder;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.attribute.TopicMessageType;
@@ -33,13 +34,13 @@ import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.common.message.MessageConst;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.protocol.header.ConsumerSendMsgBackRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader;
 import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.common.utils.NetworkUtil;
 import org.apache.rocketmq.proxy.service.route.AddressableMessageQueue;
 import org.apache.rocketmq.proxy.service.transaction.TransactionData;
-import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.header.ConsumerSendMsgBackRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
 import org.assertj.core.util.Lists;
 import org.junit.Before;
 import org.junit.Test;
@@ -70,7 +71,7 @@ public class ProducerProcessorTest extends BaseProcessorTest {
 
     @Test
     public void testSendMessage() throws Throwable {
-        when(metadataService.getTopicMessageType(eq(TOPIC))).thenReturn(TopicMessageType.NORMAL);
+        when(metadataService.getTopicMessageType(any(), eq(TOPIC))).thenReturn(TopicMessageType.NORMAL);
         String txId = MessageClientIDSetter.createUniqID();
         String msgId = MessageClientIDSetter.createUniqID();
         long commitLogOffset = 1000L;
@@ -96,6 +97,7 @@ public class ProducerProcessorTest extends BaseProcessorTest {
         ArgumentCaptor<Long> tranStateTableOffsetCaptor = ArgumentCaptor.forClass(Long.class);
         ArgumentCaptor<Long> commitLogOffsetCaptor = ArgumentCaptor.forClass(Long.class);
         when(transactionService.addTransactionDataByBrokerName(
+            any(),
             brokerNameCaptor.capture(),
             anyString(),
             tranStateTableOffsetCaptor.capture(),
@@ -150,6 +152,7 @@ public class ProducerProcessorTest extends BaseProcessorTest {
         ArgumentCaptor<Long> tranStateTableOffsetCaptor = ArgumentCaptor.forClass(Long.class);
         ArgumentCaptor<Long> commitLogOffsetCaptor = ArgumentCaptor.forClass(Long.class);
         when(transactionService.addTransactionDataByBrokerName(
+            any(),
             brokerNameCaptor.capture(),
             anyString(),
             tranStateTableOffsetCaptor.capture(),
@@ -183,7 +186,7 @@ public class ProducerProcessorTest extends BaseProcessorTest {
         when(this.messageService.sendMessageBack(any(), any(), anyString(), requestHeaderArgumentCaptor.capture(), anyLong()))
             .thenReturn(CompletableFuture.completedFuture(mock(RemotingCommand.class)));
 
-        MessageExt messageExt = createMessageExt(KeyBuilder.buildPopRetryTopic(TOPIC, CONSUMER_GROUP), "", 16, 3000);
+        MessageExt messageExt = createMessageExt(KeyBuilder.buildPopRetryTopic(TOPIC, CONSUMER_GROUP, new BrokerConfig().isEnableRetryTopicV2()), "", 16, 3000);
         RemotingCommand remotingCommand = this.producerProcessor.forwardMessageToDeadLetterQueue(
             createContext(),
             create(messageExt),
@@ -204,7 +207,7 @@ public class ProducerProcessorTest extends BaseProcessorTest {
         int msgIDLength = 4 + 4 + 8;
         ByteBuffer byteBufferMsgId = ByteBuffer.allocate(msgIDLength);
         return MessageDecoder.createMessageId(byteBufferMsgId,
-            MessageExt.socketAddress2ByteBuffer(RemotingUtil.string2SocketAddress("127.0.0.1:10911")),
+            MessageExt.socketAddress2ByteBuffer(NetworkUtil.string2SocketAddress("127.0.0.1:10911")),
             commitLogOffset);
     }
 }

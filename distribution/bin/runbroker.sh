@@ -24,6 +24,24 @@ error_exit ()
     exit 1
 }
 
+find_java_home()
+{
+    case "`uname`" in
+        Darwin)
+          if [ -n "$JAVA_HOME" ]; then
+            JAVA_HOME=$JAVA_HOME
+            return
+          fi
+            JAVA_HOME=$(/usr/libexec/java_home)
+        ;;
+        *)
+            JAVA_HOME=$(dirname $(dirname $(readlink -f $(which javac))))
+        ;;
+    esac
+}
+
+find_java_home
+
 [ ! -e "$JAVA_HOME/bin/java" ] && JAVA_HOME=$HOME/jdk/java
 [ ! -e "$JAVA_HOME/bin/java" ] && JAVA_HOME=/usr/java
 [ ! -e "$JAVA_HOME/bin/java" ] && error_exit "Please set the JAVA_HOME variable in your environment, We need java(x64)!"
@@ -88,7 +106,6 @@ JAVA_OPT="${JAVA_OPT} -XX:-OmitStackTraceInFastThrow"
 JAVA_OPT="${JAVA_OPT} -XX:+AlwaysPreTouch"
 JAVA_OPT="${JAVA_OPT} -XX:MaxDirectMemorySize=15g"
 JAVA_OPT="${JAVA_OPT} -XX:-UseLargePages -XX:-UseBiasedLocking"
-JAVA_OPT="${JAVA_OPT} -Drocketmq.client.logUseSlf4j=true"
 #JAVA_OPT="${JAVA_OPT} -Xdebug -Xrunjdwp:transport=dt_socket,address=9555,server=y,suspend=n"
 JAVA_OPT="${JAVA_OPT} ${JAVA_OPT_EXT}"
 JAVA_OPT="${JAVA_OPT} -cp ${CLASSPATH}"
@@ -102,5 +119,5 @@ then
 		numactl --cpunodebind=$RMQ_NUMA_NODE --membind=$RMQ_NUMA_NODE $JAVA ${JAVA_OPT} $@
 	fi
 else
-	$JAVA ${JAVA_OPT} $@
+	"$JAVA" ${JAVA_OPT} $@
 fi

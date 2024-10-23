@@ -17,8 +17,8 @@
 
 package org.apache.rocketmq.proxy.common.utils;
 
-import org.apache.rocketmq.common.filter.FilterAPI;
-import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.remoting.protocol.filter.FilterAPI;
+import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 import org.junit.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,4 +48,29 @@ public class FilterUtilTest {
         assertThat(FilterUtils.isTagMatched(subscriptionData.getTagsSet(), null)).isFalse();
     }
 
-} 
+    @Test
+    public void testBuildSubscriptionData() throws Exception {
+        // Test case 1: expressionType is null, will use TAG as default.
+        String topic = "topic";
+        String subString = "substring";
+        String expressionType = null;
+        SubscriptionData result = FilterAPI.buildSubscriptionData(topic, subString, expressionType);
+        assertThat(result).isNotNull();
+        assertThat(topic).isEqualTo(result.getTopic());
+        assertThat(subString).isEqualTo(result.getSubString());
+        assertThat(result.getExpressionType()).isEqualTo("TAG");
+        assertThat(result.getCodeSet().size()).isEqualTo(1);
+
+        // Test case 2: expressionType is not null
+        topic = "topic";
+        subString = "substring1||substring2";
+        expressionType = "SQL92";
+        result = FilterAPI.buildSubscriptionData(topic, subString, expressionType);
+        assertThat(result).isNotNull();
+        assertThat(topic).isEqualTo(result.getTopic());
+        assertThat(subString).isEqualTo(result.getSubString());
+        assertThat(result.getExpressionType()).isEqualTo(expressionType);
+        assertThat(result.getCodeSet().size()).isEqualTo(2);
+    }
+
+}

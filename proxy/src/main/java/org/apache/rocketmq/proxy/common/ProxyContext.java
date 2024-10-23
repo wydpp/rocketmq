@@ -17,6 +17,7 @@
 
 package org.apache.rocketmq.proxy.common;
 
+import io.netty.channel.Channel;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -76,6 +77,15 @@ public class ProxyContext {
         return this.getVal(ContextVariable.CLIENT_ID);
     }
 
+    public ProxyContext setChannel(Channel channel) {
+        this.withVal(ContextVariable.CHANNEL, channel);
+        return this;
+    }
+
+    public Channel getChannel() {
+        return this.getVal(ContextVariable.CHANNEL);
+    }
+
     public ProxyContext setLanguage(String language) {
         this.withVal(ContextVariable.LANGUAGE, language);
         return this;
@@ -110,6 +120,24 @@ public class ProxyContext {
 
     public String getAction() {
         return this.getVal(ContextVariable.ACTION);
+    }
+
+    public ProxyContext setProtocolType(String protocol) {
+        this.withVal(ContextVariable.PROTOCOL_TYPE, protocol);
+        return this;
+    }
+
+    public String getProtocolType() {
+        return this.getVal(ContextVariable.PROTOCOL_TYPE);
+    }
+
+    public ProxyContext setNamespace(String namespace) {
+        this.withVal(ContextVariable.NAMESPACE, namespace);
+        return this;
+    }
+
+    public String getNamespace() {
+        return this.getVal(ContextVariable.NAMESPACE);
     }
 
 }

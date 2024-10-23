@@ -27,28 +27,27 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
-
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
-import org.apache.commons.cli.PosixParser;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.rocketmq.acl.common.AclClientRPCHook;
-import org.apache.rocketmq.acl.common.SessionCredentials;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
-import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.client.producer.DefaultMQProducer;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.client.producer.SendStatus;
 import org.apache.rocketmq.common.ThreadFactoryImpl;
-import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.compression.CompressionType;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 import org.apache.rocketmq.remoting.protocol.SerializeType;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.srvutil.ServerUtil;
 
 public class BatchProducer {
@@ -59,7 +58,7 @@ public class BatchProducer {
         System.setProperty(RemotingCommand.SERIALIZE_TYPE_PROPERTY, SerializeType.ROCKETMQ.name());
 
         Options options = ServerUtil.buildCommandlineOptions(new Options());
-        CommandLine commandLine = ServerUtil.parseCmdLine("benchmarkBatchProducer", args, buildCommandlineOptions(options), new PosixParser());
+        CommandLine commandLine = ServerUtil.parseCmdLine("benchmarkBatchProducer", args, buildCommandlineOptions(options), new DefaultParser());
         if (null == commandLine) {
             System.exit(-1);
         }
@@ -74,11 +73,12 @@ public class BatchProducer {
         final int tagCount = getOptionValue(commandLine, 'l', 0);
         final boolean msgTraceEnable = getOptionValue(commandLine, 'm', false);
         final boolean aclEnable = getOptionValue(commandLine, 'a', false);
-        final String ak = getOptionValue(commandLine, 'c', "rocketmq2");
-        final String sk = getOptionValue(commandLine, 'e', "12346789");
+        final boolean enableCompress = commandLine.hasOption('c') && Boolean.parseBoolean(commandLine.getOptionValue('c'));
+        final int reportInterval = commandLine.hasOption("ri") ? Integer.parseInt(commandLine.getOptionValue("ri")) : 10000;
 
-        System.out.printf("topic: %s threadCount: %d messageSize: %d batchSize: %d keyEnable: %s propertySize: %d tagCount: %d traceEnable: %s aclEnable: %s%n",
-                topic, threadCount, messageSize, batchSize, keyEnable, propertySize, tagCount, msgTraceEnable, aclEnable);
+        System.out.printf("topic: %s, threadCount: %d, messageSize: %d, batchSize: %d, keyEnable: %s, propertySize: %d, tagCount: %d, traceEnable: %s, " +
+                "aclEnable: %s%n compressEnable: %s, reportInterval: %d%n",
+            topic, threadCount, messageSize, batchSize, keyEnable, propertySize, tagCount, msgTraceEnable, aclEnable, enableCompress, reportInterval);
 
         StringBuilder sb = new StringBuilder(messageSize);
         for (int i = 0; i < messageSize; i++) {
@@ -86,13 +86,33 @@ public class BatchProducer {
         }
         msgBody = sb.toString().getBytes(StandardCharsets.UTF_8);
 
-        final StatsBenchmarkBatchProducer statsBenchmark = new StatsBenchmarkBatchProducer();
+        final StatsBenchmarkBatchProducer statsBenchmark = new StatsBenchmarkBatchProducer(reportInterval);
         statsBenchmark.start();
 
-        final DefaultMQProducer producer = initInstance(namesrv, msgTraceEnable, aclEnable, ak, sk);
+        RPCHook rpcHook = null;
+        if (aclEnable) {
+            String ak = commandLine.hasOption("ak") ? String.valueOf(commandLine.getOptionValue("ak")) : AclClient.ACL_ACCESS_KEY;
+            String sk = commandLine.hasOption("sk") ? String.valueOf(commandLine.getOptionValue("sk")) : AclClient.ACL_SECRET_KEY;
+            rpcHook = AclClient.getAclRPCHook(ak, sk);
+        }
+
+        final DefaultMQProducer producer = initInstance(namesrv, msgTraceEnable, rpcHook);
+
+        if (enableCompress) {
+            String compressType = commandLine.hasOption("ct") ? commandLine.getOptionValue("ct").trim() : "ZLIB";
+            int compressLevel = commandLine.hasOption("cl") ? Integer.parseInt(commandLine.getOptionValue("cl")) : 5;
+            int compressOverHowMuch = commandLine.hasOption("ch") ? Integer.parseInt(commandLine.getOptionValue("ch")) : 4096;
+            producer.getDefaultMQProducerImpl().setCompressType(CompressionType.of(compressType));
+            producer.getDefaultMQProducerImpl().setCompressLevel(compressLevel);
+            producer.setCompressMsgBodyOverHowmuch(compressOverHowMuch);
+            System.out.printf("compressType: %s compressLevel: %s%n", compressType, compressLevel);
+        } else {
+            producer.setCompressMsgBodyOverHowmuch(Integer.MAX_VALUE);
+        }
+
         producer.start();
 
-        final InternalLogger log = ClientLogger.getLog();
+        final Logger logger = LoggerFactory.getLogger(BatchProducer.class);
         final ExecutorService sendThreadPool = Executors.newFixedThreadPool(threadCount);
         for (int i = 0; i < threadCount; i++) {
             sendThreadPool.execute(new Runnable() {
@@ -134,7 +154,7 @@ public class BatchProducer {
                         } catch (RemotingException e) {
                             statsBenchmark.getSendRequestFailedCount().increment();
                             statsBenchmark.getSendMessageFailedCount().add(msgs.size());
-                            log.error("[BENCHMARK_PRODUCER] Send Exception", e);
+                            logger.error("[BENCHMARK_PRODUCER] Send Exception", e);
 
                             try {
                                 Thread.sleep(3000);
@@ -149,15 +169,15 @@ public class BatchProducer {
                             }
                             statsBenchmark.getSendRequestFailedCount().increment();
                             statsBenchmark.getSendMessageFailedCount().add(msgs.size());
-                            log.error("[BENCHMARK_PRODUCER] Send Exception", e);
+                            logger.error("[BENCHMARK_PRODUCER] Send Exception", e);
                         } catch (MQClientException e) {
                             statsBenchmark.getSendRequestFailedCount().increment();
                             statsBenchmark.getSendMessageFailedCount().add(msgs.size());
-                            log.error("[BENCHMARK_PRODUCER] Send Exception", e);
+                            logger.error("[BENCHMARK_PRODUCER] Send Exception", e);
                         } catch (MQBrokerException e) {
                             statsBenchmark.getSendRequestFailedCount().increment();
                             statsBenchmark.getSendMessageFailedCount().add(msgs.size());
-                            log.error("[BENCHMARK_PRODUCER] Send Exception", e);
+                            logger.error("[BENCHMARK_PRODUCER] Send Exception", e);
                             try {
                                 Thread.sleep(3000);
                             } catch (InterruptedException ignored) {
@@ -202,11 +222,11 @@ public class BatchProducer {
         opt.setRequired(false);
         options.addOption(opt);
 
-        opt = new Option("c", "accessKey", true, "Acl Access Key, Default: rocketmq2");
+        opt = new Option("ak", "accessKey", true, "Acl Access Key, Default: rocketmq2");
         opt.setRequired(false);
         options.addOption(opt);
 
-        opt = new Option("e", "secretKey", true, "Acl Secret Key, Default: 123456789");
+        opt = new Option("sk", "secretKey", true, "Acl Secret Key, Default: 123456789");
         opt.setRequired(false);
         options.addOption(opt);
 
@@ -217,6 +237,27 @@ public class BatchProducer {
         opt = new Option("n", "namesrv", true, "name server, Default: 127.0.0.1:9876");
         opt.setRequired(false);
         options.addOption(opt);
+
+        opt = new Option("c", "compressEnable", true, "Enable compress msg over 4K, Default: false");
+        opt.setRequired(false);
+        options.addOption(opt);
+
+        opt = new Option("ct", "compressType", true, "Message compressed type, Default: ZLIB");
+        opt.setRequired(false);
+        options.addOption(opt);
+
+        opt = new Option("cl", "compressLevel", true, "Message compressed level, Default: 5");
+        opt.setRequired(false);
+        options.addOption(opt);
+
+        opt = new Option("ch", "compressOverHowMuch", true, "Compress message when body over how much(unit Byte), Default: 4096");
+        opt.setRequired(false);
+        options.addOption(opt);
+
+        opt = new Option("ri", "reportInterval", true, "The number of ms between reports, Default: 10000");
+        opt.setRequired(false);
+        options.addOption(opt);
+
         return options;
     }
 
@@ -295,14 +336,11 @@ public class BatchProducer {
         }
     }
 
-    private static DefaultMQProducer initInstance(String namesrv, boolean traceEnable, boolean aclEnable, String ak,
-                                                  String sk) {
-        RPCHook rpcHook = aclEnable ? new AclClientRPCHook(new SessionCredentials(ak, sk)) : null;
+    private static DefaultMQProducer initInstance(String namesrv, boolean traceEnable, RPCHook rpcHook) {
         final DefaultMQProducer producer = new DefaultMQProducer("benchmark_batch_producer", rpcHook, traceEnable, null);
         producer.setInstanceName(Long.toString(System.currentTimeMillis()));
 
         producer.setNamesrvAddr(namesrv);
-        producer.setCompressMsgBodyOverHowmuch(Integer.MAX_VALUE);
         return producer;
     }
 }
@@ -322,18 +360,24 @@ class StatsBenchmarkBatchProducer {
     private final LongAdder sendMessageFailedCount = new LongAdder();
 
     private final ScheduledExecutorService executorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
-            "BenchmarkTimerThread", Boolean.TRUE));
+        "BenchmarkTimerThread", Boolean.TRUE));
 
     private final LinkedList<Long[]> snapshotList = new LinkedList<>();
 
+    private final int reportInterval;
+
+    public StatsBenchmarkBatchProducer(int reportInterval) {
+        this.reportInterval = reportInterval;
+    }
+
     public Long[] createSnapshot() {
         Long[] snap = new Long[] {
-                System.currentTimeMillis(),
-                this.sendRequestSuccessCount.longValue(),
-                this.sendRequestFailedCount.longValue(),
-                this.sendMessageSuccessCount.longValue(),
-                this.sendMessageFailedCount.longValue(),
-                this.sendMessageSuccessTimeTotal.longValue(),
+            System.currentTimeMillis(),
+            this.sendRequestSuccessCount.longValue(),
+            this.sendRequestFailedCount.longValue(),
+            this.sendMessageSuccessCount.longValue(),
+            this.sendMessageFailedCount.longValue(),
+            this.sendMessageSuccessTimeTotal.longValue(),
         };
 
         return snap;
@@ -386,8 +430,8 @@ class StatsBenchmarkBatchProducer {
                     final double averageRT = (end[5] - begin[5]) / (double) (end[1] - begin[1]);
                     final double averageMsgRT = (end[5] - begin[5]) / (double) (end[3] - begin[3]);
 
-                    System.out.printf("Current Time: %s Send TPS: %d Send MPS: %d Max RT(ms): %d Average RT(ms): %7.3f Average Message RT(ms): %7.3f Send Failed: %d Send Message Failed: %d%n",
-                            System.currentTimeMillis(), sendTps, sendMps, getSendMessageMaxRT().longValue(), averageRT, averageMsgRT, end[2], end[4]);
+                    System.out.printf("Current Time: %s | Send TPS: %d | Send MPS: %d | Max RT(ms): %d | Average RT(ms): %7.3f | Average Message RT(ms): %7.3f | Send Failed: %d | Send Message Failed: %d%n",
+                        UtilAll.timeMillisToHumanString2(System.currentTimeMillis()), sendTps, sendMps, getSendMessageMaxRT().longValue(), averageRT, averageMsgRT, end[2], end[4]);
                 }
             }
 
@@ -399,7 +443,7 @@ class StatsBenchmarkBatchProducer {
                     e.printStackTrace();
                 }
             }
-        }, 10000, 10000, TimeUnit.MILLISECONDS);
+        }, reportInterval, reportInterval, TimeUnit.MILLISECONDS);
     }
 
     public void shutdown() {

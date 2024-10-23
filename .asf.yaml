@@ -23,13 +23,14 @@ github:
     - cloud-native
     - rocketmq
     - java
+    - hacktoberfest
   enabled_merge_buttons:
     # Enable squash button
     squash: true
     # Disable merge button
     merge: false
-    # Enable rebase button
-    rebase: true
+    # Disable rebase button
+    rebase: false
   protected_branches:
     master: {}
     develop:
@@ -41,4 +42,12 @@ github:
         contexts:
           - misspell-check
           - check-license
-          - maven-compile (ubuntu-18.04, JDK-8)
+          - maven-compile (ubuntu-latest, JDK-8)
+          - maven-compile (windows-latest, JDK-8)
+          - maven-compile (macos-latest, JDK-8)
+notifications:
+  commits:      commits@rocketmq.apache.org
+  issues:       commits@rocketmq.apache.org
+  pullrequests: commits@rocketmq.apache.org
+  jobs:         commits@rocketmq.apache.org
+  discussions:  dev@rocketmq.apache.org

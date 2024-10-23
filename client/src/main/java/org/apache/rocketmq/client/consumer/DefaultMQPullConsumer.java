@@ -30,10 +30,10 @@ import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.NamespaceUtil;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
+import org.apache.rocketmq.remoting.protocol.NamespaceUtil;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
 
 /**
  * @deprecated Default pulling consumer. This class will be removed in 2022, and a better implementation {@link
@@ -76,7 +76,7 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     /**
      * Topic set you want to register
      */
-    private Set<String> registerTopics = new HashSet<String>();
+    private Set<String> registerTopics = new HashSet<>();
     /**
      * Queue allocation algorithm
      */
@@ -89,23 +89,21 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     private int maxReconsumeTimes = 16;
 
     public DefaultMQPullConsumer() {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, null);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, null);
     }
 
     public DefaultMQPullConsumer(final String consumerGroup) {
-        this(null, consumerGroup, null);
+        this(consumerGroup, null);
     }
 
     public DefaultMQPullConsumer(RPCHook rpcHook) {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
     }
 
     public DefaultMQPullConsumer(final String consumerGroup, RPCHook rpcHook) {
-        this(null, consumerGroup, rpcHook);
-    }
-
-    public DefaultMQPullConsumer(final String namespace, final String consumerGroup) {
-        this(namespace, consumerGroup, null);
+        this.consumerGroup = consumerGroup;
+        this.enableStreamRequestType = true;
+        defaultMQPullConsumerImpl = new DefaultMQPullConsumerImpl(this, rpcHook);
     }
 
     /**

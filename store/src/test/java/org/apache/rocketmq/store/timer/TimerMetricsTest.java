@@ -16,6 +16,9 @@
  */
 package org.apache.rocketmq.store.timer;
 
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageExt;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -31,8 +34,11 @@ public class TimerMetricsTest {
 
         TimerMetrics first = new TimerMetrics(baseDir);
         Assert.assertTrue(first.load());
-        first.addAndGet("AAA", 1000);
-        first.addAndGet("BBB", 2000);
+        MessageExt msg = new MessageExt();
+        MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, "AAA");
+        first.addAndGet(msg, 1000);
+        MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, "BBB");
+        first.addAndGet(msg, 2000);
         Assert.assertEquals(1000, first.getTimingCount("AAA"));
         Assert.assertEquals(2000, first.getTimingCount("BBB"));
         long curr = System.currentTimeMillis();
@@ -51,26 +57,31 @@ public class TimerMetricsTest {
     }
 
     @Test
-    public void testTimingDistribution(){
+    public void testTimingDistribution() {
         String baseDir = StoreTestUtils.createBaseDir();
         TimerMetrics first = new TimerMetrics(baseDir);
-        List<Integer> timerDist = new ArrayList<Integer>(){{
-            add(5);add(60);add(300); // 5s, 1min, 5min
-            add(900);add(3600);add(14400); // 15min, 1h, 4h
-            add(28800);add(86400); // 8h, 24h
-        }};
-        for(int period:timerDist){
-            first.updateDistPair(period,period);
+        List<Integer> timerDist = new ArrayList<Integer>() {{
+                add(5);
+                add(60);
+                add(300); // 5s, 1min, 5min
+                add(900);
+                add(3600);
+                add(14400); // 15min, 1h, 4h
+                add(28800);
+                add(86400); // 8h, 24h
+            }};
+        for (int period : timerDist) {
+            first.updateDistPair(period, period);
         }
 
         int temp = 0;
 
-        for(int j=0;j<50;j++){
-            for(int period:timerDist){
-                Assert.assertEquals(first.getDistPair(period).getCount().get(),period+temp);
-                first.updateDistPair(period,j);
+        for (int j = 0; j < 50; j++) {
+            for (int period : timerDist) {
+                Assert.assertEquals(first.getDistPair(period).getCount().get(),period + temp);
+                first.updateDistPair(period, j);
             }
-            temp+=j;
+            temp += j;
         }
 
         StoreTestUtils.deleteFile(baseDir);

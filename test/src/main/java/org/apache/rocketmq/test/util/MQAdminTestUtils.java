@@ -17,26 +17,35 @@
 
 package org.apache.rocketmq.test.util;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Options;
-import org.apache.commons.cli.PosixParser;
-import org.apache.log4j.Logger;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.impl.factory.MQClientInstance;
 import org.apache.rocketmq.common.MixAll;
-import org.apache.rocketmq.common.admin.TopicStatsTable;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.body.ClusterInfo;
-import org.apache.rocketmq.common.protocol.route.BrokerData;
-import org.apache.rocketmq.common.rpc.ClientMetadata;
-import org.apache.rocketmq.common.statictopic.TopicConfigAndQueueMapping;
-import org.apache.rocketmq.common.statictopic.TopicQueueMappingOne;
-import org.apache.rocketmq.common.statictopic.TopicQueueMappingUtils;
-import org.apache.rocketmq.common.statictopic.TopicRemappingDetailWrapper;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.remoting.exception.RemotingException;
+import org.apache.rocketmq.remoting.protocol.admin.ConsumeStats;
+import org.apache.rocketmq.remoting.protocol.admin.TopicStatsTable;
+import org.apache.rocketmq.remoting.protocol.body.ClusterInfo;
+import org.apache.rocketmq.remoting.protocol.route.BrokerData;
+import org.apache.rocketmq.remoting.protocol.route.TopicRouteData;
+import org.apache.rocketmq.remoting.protocol.statictopic.TopicConfigAndQueueMapping;
+import org.apache.rocketmq.remoting.protocol.statictopic.TopicQueueMappingOne;
+import org.apache.rocketmq.remoting.protocol.statictopic.TopicQueueMappingUtils;
+import org.apache.rocketmq.remoting.protocol.statictopic.TopicRemappingDetailWrapper;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
+import org.apache.rocketmq.remoting.rpc.ClientMetadata;
 import org.apache.rocketmq.srvutil.ServerUtil;
 import org.apache.rocketmq.tools.admin.DefaultMQAdminExt;
 import org.apache.rocketmq.tools.admin.MQAdminUtils;
@@ -44,17 +53,23 @@ import org.apache.rocketmq.tools.command.CommandUtil;
 import org.apache.rocketmq.tools.command.topic.RemappingStaticTopicSubCommand;
 import org.apache.rocketmq.tools.command.topic.UpdateStaticTopicSubCommand;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ForkJoinPool;
-
-import static org.apache.rocketmq.common.statictopic.TopicQueueMappingUtils.getMappingDetailFromConfig;
+import static org.apache.rocketmq.remoting.protocol.statictopic.TopicQueueMappingUtils.getMappingDetailFromConfig;
 import static org.awaitility.Awaitility.await;
 
 public class MQAdminTestUtils {
-    private static Logger log = Logger.getLogger(MQAdminTestUtils.class);
+    private static Logger log = LoggerFactory.getLogger(MQAdminTestUtils.class);
+
+    private static DefaultMQAdminExt mqAdminExt;
+
+    public static void startAdmin(String nameSrvAddr) throws MQClientException {
+        mqAdminExt = new DefaultMQAdminExt();
+        mqAdminExt.setNamesrvAddr(nameSrvAddr);
+        mqAdminExt.start();
+    }
+
+    public static void shutdownAdmin() {
+        mqAdminExt.shutdown();
+    }
 
     public static boolean createTopic(String nameSrvAddr, String clusterName, String topic,
                                       int queueNum, Map<String, String> attributes) {
@@ -78,7 +93,7 @@ public class MQAdminTestUtils {
         return true;
     }
 
-    private static boolean checkTopicExist(DefaultMQAdminExt mqAdminExt, String topic) {
+    public static boolean checkTopicExist(DefaultMQAdminExt mqAdminExt, String topic) {
         boolean createResult = false;
         try {
             TopicStatsTable topicInfo = mqAdminExt.examineTopicStats(topic);
@@ -258,7 +273,7 @@ public class MQAdminTestUtils {
                 "-n", nameservers
             };
         }
-        final CommandLine commandLine = ServerUtil.parseCmdLine("mqadmin " + cmd.commandName(), args, cmd.buildCommandlineOptions(options), new PosixParser());
+        final CommandLine commandLine = ServerUtil.parseCmdLine("mqadmin " + cmd.commandName(), args, cmd.buildCommandlineOptions(options), new DefaultParser());
         if (null == commandLine) {
             return;
         }
@@ -287,7 +302,7 @@ public class MQAdminTestUtils {
                 "-n", nameservers
             };
         }
-        final CommandLine commandLine = ServerUtil.parseCmdLine("mqadmin " + cmd.commandName(), args, cmd.buildCommandlineOptions(options), new PosixParser());
+        final CommandLine commandLine = ServerUtil.parseCmdLine("mqadmin " + cmd.commandName(), args, cmd.buildCommandlineOptions(options), new DefaultParser());
         if (null == commandLine) {
             return;
         }
@@ -298,4 +313,47 @@ public class MQAdminTestUtils {
         cmd.execute(commandLine, options, null);
     }
 
+    public static ConsumeStats examineConsumeStats(String brokerAddr, String topic, String group) {
+        ConsumeStats consumeStats = null;
+        try {
+            consumeStats = mqAdminExt.examineConsumeStats(brokerAddr, group, topic, 3000);
+        } catch (Exception ignored) {
+        }
+        return consumeStats;
+    }
+
+    /**
+     * Delete topic from broker only without cleaning route info from name server forwardly
+     *
+     * @param nameSrvAddr the namesrv addr to connect
+     * @param brokerName the specific broker
+     * @param topic the specific topic to delete
+     */
+    public static void deleteTopicFromBrokerOnly(String nameSrvAddr, String brokerName, String topic) {
+        DefaultMQAdminExt mqAdminExt = new DefaultMQAdminExt();
+        mqAdminExt.setNamesrvAddr(nameSrvAddr);
+
+        try {
+            mqAdminExt.start();
+            String brokerAddr = CommandUtil.fetchMasterAddrByBrokerName(mqAdminExt, brokerName);
+            mqAdminExt.deleteTopicInBroker(Collections.singleton(brokerAddr), topic);
+        } catch (Exception ignored) {
+        } finally {
+            mqAdminExt.shutdown();
+        }
+    }
+
+    public static TopicRouteData examineTopicRouteInfo(String nameSrvAddr, String topicName) {
+        DefaultMQAdminExt mqAdminExt = new DefaultMQAdminExt();
+        mqAdminExt.setNamesrvAddr(nameSrvAddr);
+        TopicRouteData route = null;
+        try {
+            mqAdminExt.start();
+            route = mqAdminExt.examineTopicRouteInfo(topicName);
+        } catch (Exception ignored) {
+        } finally {
+            mqAdminExt.shutdown();
+        }
+        return route;
+    }
 }

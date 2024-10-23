@@ -24,10 +24,10 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.admin.RollbackStats;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.ResponseCode;
 import org.apache.rocketmq.remoting.RPCHook;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.admin.RollbackStats;
 import org.apache.rocketmq.tools.admin.DefaultMQAdminExt;
 import org.apache.rocketmq.tools.command.SubCommand;
 import org.apache.rocketmq.tools.command.SubCommandException;
@@ -41,7 +41,7 @@ public class SkipAccumulationSubCommand implements SubCommand {
 
     @Override
     public String commandDesc() {
-        return "Skip all messages that are accumulated (not consumed) currently";
+        return "Skip all messages that are accumulated (not consumed) currently.";
     }
 
     @Override

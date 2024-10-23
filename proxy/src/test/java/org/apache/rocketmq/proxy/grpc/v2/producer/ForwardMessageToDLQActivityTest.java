@@ -24,10 +24,10 @@ import apache.rocketmq.v2.Resource;
 import java.util.concurrent.CompletableFuture;
 import org.apache.rocketmq.common.consumer.ReceiptHandle;
 import org.apache.rocketmq.common.message.MessageClientIDSetter;
-import org.apache.rocketmq.common.protocol.ResponseCode;
 import org.apache.rocketmq.proxy.common.MessageReceiptHandle;
 import org.apache.rocketmq.proxy.grpc.v2.BaseActivityTest;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -44,7 +44,7 @@ public class ForwardMessageToDLQActivityTest extends BaseActivityTest {
     @Before
     public void before() throws Throwable {
         super.before();
-        this.forwardMessageToDLQActivity = new ForwardMessageToDLQActivity(messagingProcessor,receiptHandleProcessor, grpcClientSettingsManager, grpcChannelManager);
+        this.forwardMessageToDLQActivity = new ForwardMessageToDLQActivity(messagingProcessor, grpcClientSettingsManager, grpcChannelManager);
     }
 
     @Test
@@ -75,7 +75,7 @@ public class ForwardMessageToDLQActivityTest extends BaseActivityTest {
             .thenReturn(CompletableFuture.completedFuture(RemotingCommand.createResponseCommand(ResponseCode.SUCCESS, "")));
 
         String savedHandleStr = buildReceiptHandle("topic", System.currentTimeMillis(),3000);
-        when(receiptHandleProcessor.removeReceiptHandle(anyString(), anyString(), anyString(), anyString()))
+        when(messagingProcessor.removeReceiptHandle(any(), any(), anyString(), anyString(), anyString()))
             .thenReturn(new MessageReceiptHandle("group", "topic", 0, savedHandleStr, "msgId", 0, 0));
 
         ForwardMessageToDeadLetterQueueResponse response = this.forwardMessageToDLQActivity.forwardMessageToDeadLetterQueue(

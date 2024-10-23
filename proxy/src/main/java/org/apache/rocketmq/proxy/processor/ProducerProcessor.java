@@ -19,6 +19,7 @@ package org.apache.rocketmq.proxy.processor;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+
 import org.apache.commons.lang3.StringUtils;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.client.producer.SendStatus;
@@ -28,17 +29,14 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.common.consumer.ReceiptHandle;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.common.message.MessageConst;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageId;
-import org.apache.rocketmq.common.protocol.NamespaceUtil;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.header.ConsumerSendMsgBackRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader;
 import org.apache.rocketmq.common.sysflag.MessageSysFlag;
 import org.apache.rocketmq.common.topic.TopicValidator;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.proxy.common.ProxyContext;
 import org.apache.rocketmq.proxy.common.ProxyException;
 import org.apache.rocketmq.proxy.common.ProxyExceptionCode;
@@ -48,10 +46,14 @@ import org.apache.rocketmq.proxy.processor.validator.DefaultTopicMessageTypeVali
 import org.apache.rocketmq.proxy.processor.validator.TopicMessageTypeValidator;
 import org.apache.rocketmq.proxy.service.ServiceManager;
 import org.apache.rocketmq.proxy.service.route.AddressableMessageQueue;
+import org.apache.rocketmq.remoting.protocol.NamespaceUtil;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.header.ConsumerSendMsgBackRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
 
 public class ProducerProcessor extends AbstractProcessor {
-    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
+    private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
     private final ExecutorService executor;
     private final TopicMessageTypeValidator topicMessageTypeValidator;
 
@@ -65,6 +67,8 @@ public class ProducerProcessor extends AbstractProcessor {
     public CompletableFuture<List<SendResult>> sendMessage(ProxyContext ctx, QueueSelector queueSelector,
         String producerGroup, int sysFlag, List<Message> messageList, long timeoutMillis) {
         CompletableFuture<List<SendResult>> future = new CompletableFuture<>();
+        long beginTimestampFirst = System.currentTimeMillis();
+        AddressableMessageQueue messageQueue = null;
         try {
             Message message = messageList.get(0);
             String topic = message.getTopic();
@@ -72,20 +76,24 @@ public class ProducerProcessor extends AbstractProcessor {
                 if (topicMessageTypeValidator != null) {
                     // Do not check retry or dlq topic
                     if (!NamespaceUtil.isRetryTopic(topic) && !NamespaceUtil.isDLQTopic(topic)) {
-                        TopicMessageType topicMessageType = serviceManager.getMetadataService().getTopicMessageType(topic);
-                        TopicMessageType messageType = parseFromMessageExt(message);
+                        TopicMessageType topicMessageType = serviceManager.getMetadataService().getTopicMessageType(ctx, topic);
+                        TopicMessageType messageType = TopicMessageType.parseFromMessageProperty(message.getProperties());
                         topicMessageTypeValidator.validate(topicMessageType, messageType);
                     }
                 }
             }
-            AddressableMessageQueue messageQueue = queueSelector.select(ctx,
-                this.serviceManager.getTopicRouteService().getCurrentMessageQueueView(topic));
+            messageQueue = queueSelector.select(ctx,
+                this.serviceManager.getTopicRouteService().getCurrentMessageQueueView(ctx, topic));
             if (messageQueue == null) {
                 throw new ProxyException(ProxyExceptionCode.FORBIDDEN, "no writable queue");
             }
 
+            for (Message msg : messageList) {
+                MessageClientIDSetter.setUniqID(msg);
+            }
             SendMessageRequestHeader requestHeader = buildSendMessageRequestHeader(messageList, producerGroup, sysFlag, messageQueue.getQueueId());
 
+            AddressableMessageQueue finalMessageQueue = messageQueue;
             future = this.serviceManager.getMessageService().sendMessage(
                 ctx,
                 messageQueue,
@@ -98,18 +106,26 @@ public class ProducerProcessor extends AbstractProcessor {
                         if (SendStatus.SEND_OK.equals(sendResult.getSendStatus()) &&
                             tranType == MessageSysFlag.TRANSACTION_PREPARED_TYPE &&
                             StringUtils.isNotBlank(sendResult.getTransactionId())) {
-                            fillTransactionData(producerGroup, messageQueue, sendResult, messageList);
+                            fillTransactionData(ctx, producerGroup, finalMessageQueue, sendResult, messageList);
                         }
                     }
                     return sendResultList;
-                }, this.executor);
+                }, this.executor)
+                    .whenComplete((result, exception) -> {
+                        long endTimestamp = System.currentTimeMillis();
+                        if (exception != null) {
+                            this.serviceManager.getTopicRouteService().updateFaultItem(finalMessageQueue.getBrokerName(), endTimestamp - beginTimestampFirst, true, false);
+                        } else {
+                            this.serviceManager.getTopicRouteService().updateFaultItem(finalMessageQueue.getBrokerName(),endTimestamp - beginTimestampFirst, false, true);
+                        }
+                    });
         } catch (Throwable t) {
             future.completeExceptionally(t);
         }
         return FutureUtils.addExecutor(future, this.executor);
     }
 
-    protected void fillTransactionData(String producerGroup, AddressableMessageQueue messageQueue, SendResult sendResult, List<Message> messageList) {
+    protected void fillTransactionData(ProxyContext ctx, String producerGroup, AddressableMessageQueue messageQueue, SendResult sendResult, List<Message> messageList) {
         try {
             MessageId id;
             if (sendResult.getOffsetMsgId() != null) {
@@ -118,6 +134,7 @@ public class ProducerProcessor extends AbstractProcessor {
                 id = MessageDecoder.decodeMessageId(sendResult.getMsgId());
             }
             this.serviceManager.getTransactionService().addTransactionDataByBrokerName(
+                ctx,
                 messageQueue.getBrokerName(),
                 producerGroup,
                 sendResult.getQueueOffset(),
@@ -143,7 +160,7 @@ public class ProducerProcessor extends AbstractProcessor {
         requestHeader.setQueueId(queueId);
         requestHeader.setSysFlag(sysFlag);
         /*
-        In RocketMQ 4.0, org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader.bornTimestamp
+        In RocketMQ 4.0, org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader.bornTimestamp
         represents the timestamp when the message was born. In RocketMQ 5.0, the bornTimestamp of the message
         is a message attribute, that is, the timestamp when message was constructed, and there is no
         bornTimestamp in the SendMessageRequest of RocketMQ 5.0.

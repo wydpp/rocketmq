@@ -18,6 +18,7 @@ package org.apache.rocketmq.broker.client;
 
 import io.netty.channel.Channel;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
@@ -26,19 +27,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
-import org.apache.rocketmq.common.protocol.heartbeat.ConsumeType;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
-import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
+import org.apache.rocketmq.remoting.protocol.heartbeat.ConsumeType;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 
 public class ConsumerGroupInfo {
-    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
+    private static final Logger log = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final String groupName;
     private final ConcurrentMap<String/* Topic */, SubscriptionData> subscriptionTable =
-        new ConcurrentHashMap<String, SubscriptionData>();
+        new ConcurrentHashMap<>();
     private final ConcurrentMap<Channel, ClientChannelInfo> channelInfoTable =
-        new ConcurrentHashMap<Channel, ClientChannelInfo>(16);
+        new ConcurrentHashMap<>(16);
     private volatile ConsumeType consumeType;
     private volatile MessageModel messageModel;
     private volatile ConsumeFromWhere consumeFromWhere;
@@ -50,6 +51,10 @@ public class ConsumerGroupInfo {
         this.consumeType = consumeType;
         this.messageModel = messageModel;
         this.consumeFromWhere = consumeFromWhere;
+    }
+
+    public ConsumerGroupInfo(String groupName) {
+        this.groupName = groupName;
     }
 
     public ClientChannelInfo findChannel(final String clientId) {
@@ -168,7 +173,7 @@ public class ConsumerGroupInfo {
      */
     public boolean updateSubscription(final Set<SubscriptionData> subList) {
         boolean updated = false;
-
+        Set<String> topicSet = new HashSet<>();
         for (SubscriptionData sub : subList) {
             SubscriptionData old = this.subscriptionTable.get(sub.getTopic());
             if (old == null) {
@@ -190,22 +195,16 @@ public class ConsumerGroupInfo {
 
                 this.subscriptionTable.put(sub.getTopic(), sub);
             }
+            // Add all new topics to the HashSet
+            topicSet.add(sub.getTopic());
         }
 
         Iterator<Entry<String, SubscriptionData>> it = this.subscriptionTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<String, SubscriptionData> next = it.next();
             String oldTopic = next.getKey();
-
-            boolean exist = false;
-            for (SubscriptionData sub : subList) {
-                if (sub.getTopic().equals(oldTopic)) {
-                    exist = true;
-                    break;
-                }
-            }
-
-            if (!exist) {
+            // Check HashSet with O(1) time complexity
+            if (!topicSet.contains(oldTopic)) {
                 log.warn("subscription changed, group: {} remove topic {} {}",
                     this.groupName,
                     oldTopic,

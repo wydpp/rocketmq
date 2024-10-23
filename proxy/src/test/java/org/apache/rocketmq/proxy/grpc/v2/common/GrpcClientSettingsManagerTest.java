@@ -25,13 +25,13 @@ import apache.rocketmq.v2.RetryPolicy;
 import apache.rocketmq.v2.Settings;
 import apache.rocketmq.v2.Subscription;
 import com.google.protobuf.util.Durations;
-import org.apache.rocketmq.common.subscription.CustomizedRetryPolicy;
-import org.apache.rocketmq.common.subscription.ExponentialRetryPolicy;
-import org.apache.rocketmq.common.subscription.GroupRetryPolicyType;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.proxy.common.ContextVariable;
 import org.apache.rocketmq.proxy.common.ProxyContext;
 import org.apache.rocketmq.proxy.grpc.v2.BaseActivityTest;
+import org.apache.rocketmq.remoting.protocol.subscription.CustomizedRetryPolicy;
+import org.apache.rocketmq.remoting.protocol.subscription.ExponentialRetryPolicy;
+import org.apache.rocketmq.remoting.protocol.subscription.GroupRetryPolicyType;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -54,7 +54,7 @@ public class GrpcClientSettingsManagerTest extends BaseActivityTest {
     public void testGetProducerData() {
         ProxyContext context = ProxyContext.create().withVal(ContextVariable.CLIENT_ID, CLIENT_ID);
 
-        this.grpcClientSettingsManager.updateClientSettings(CLIENT_ID, Settings.newBuilder()
+        this.grpcClientSettingsManager.updateClientSettings(context, CLIENT_ID, Settings.newBuilder()
             .setBackoffPolicy(RetryPolicy.getDefaultInstance())
             .setPublishing(Publishing.getDefaultInstance())
             .build());
@@ -65,17 +65,17 @@ public class GrpcClientSettingsManagerTest extends BaseActivityTest {
 
     @Test
     public void testGetSubscriptionData() {
+        ProxyContext context = ProxyContext.create().withVal(ContextVariable.CLIENT_ID, CLIENT_ID);
+
         SubscriptionGroupConfig subscriptionGroupConfig = new SubscriptionGroupConfig();
         when(this.messagingProcessor.getSubscriptionGroupConfig(any(), any()))
             .thenReturn(subscriptionGroupConfig);
 
-        this.grpcClientSettingsManager.updateClientSettings(CLIENT_ID, Settings.newBuilder()
+        this.grpcClientSettingsManager.updateClientSettings(context, CLIENT_ID, Settings.newBuilder()
             .setSubscription(Subscription.newBuilder()
                 .setGroup(Resource.newBuilder().setName("group").build())
                 .build())
             .build());
-
-        ProxyContext context = ProxyContext.create().withVal(ContextVariable.CLIENT_ID, CLIENT_ID);
 
         Settings settings = this.grpcClientSettingsManager.getClientSettings(context);
         assertEquals(settings.getBackoffPolicy(), this.grpcClientSettingsManager.createDefaultConsumerSettingsBuilder().build().getBackoffPolicy());

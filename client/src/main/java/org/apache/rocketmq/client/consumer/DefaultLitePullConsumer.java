@@ -25,7 +25,6 @@ import org.apache.rocketmq.client.consumer.rebalance.AllocateMessageQueueAverage
 import org.apache.rocketmq.client.consumer.store.OffsetStore;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.impl.consumer.DefaultLitePullConsumerImpl;
-import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.client.trace.AsyncTraceDispatcher;
 import org.apache.rocketmq.client.trace.TraceDispatcher;
 import org.apache.rocketmq.client.trace.hook.ConsumeMessageTraceHookImpl;
@@ -34,14 +33,17 @@ import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.NamespaceUtil;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
-import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.RPCHook;
+import org.apache.rocketmq.remoting.protocol.NamespaceUtil;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
+
+import static org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData.SUB_ALL;
 
 public class DefaultLitePullConsumer extends ClientConfig implements LitePullConsumer {
 
-    private final InternalLogger log = ClientLogger.getLog();
+    private static final Logger log = LoggerFactory.getLogger(DefaultLitePullConsumer.class);
 
     private final DefaultLitePullConsumerImpl defaultLitePullConsumerImpl;
 
@@ -181,7 +183,7 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * Default constructor.
      */
     public DefaultLitePullConsumer() {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, null);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, null);
     }
 
     /**
@@ -190,7 +192,7 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param consumerGroup Consumer group.
      */
     public DefaultLitePullConsumer(final String consumerGroup) {
-        this(null, consumerGroup, null);
+        this(consumerGroup, null);
     }
 
     /**
@@ -199,7 +201,7 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param rpcHook RPC hook to execute before each remoting command.
      */
     public DefaultLitePullConsumer(RPCHook rpcHook) {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
     }
 
     /**
@@ -209,7 +211,9 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param rpcHook RPC hook to execute before each remoting command.
      */
     public DefaultLitePullConsumer(final String consumerGroup, RPCHook rpcHook) {
-        this(null, consumerGroup, rpcHook);
+        this.consumerGroup = consumerGroup;
+        this.enableStreamRequestType = true;
+        defaultLitePullConsumerImpl = new DefaultLitePullConsumerImpl(this, rpcHook);
     }
 
     /**
@@ -218,6 +222,7 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param consumerGroup Consumer group.
      * @param rpcHook RPC hook to execute before each remoting command.
      */
+    @Deprecated
     public DefaultLitePullConsumer(final String namespace, final String consumerGroup, RPCHook rpcHook) {
         this.namespace = namespace;
         this.consumerGroup = consumerGroup;
@@ -250,6 +255,11 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
     @Override
     public boolean isRunning() {
         return this.defaultLitePullConsumerImpl.isRunning();
+    }
+
+    @Override
+    public void subscribe(String topic) throws MQClientException {
+        this.subscribe(topic, SUB_ALL);
     }
 
     @Override
@@ -317,18 +327,24 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
         this.defaultLitePullConsumerImpl.registerTopicMessageQueueChangeListener(withNamespace(topic), topicMessageQueueChangeListener);
     }
 
+    @Deprecated
     @Override
     public void commitSync() {
         this.defaultLitePullConsumerImpl.commitAll();
     }
 
-    /**
-     * Offset specified by batch commit
-     * @param offsetMap
-     * @param persist
-     */
+    @Deprecated
     @Override
     public void commitSync(Map<MessageQueue, Long> offsetMap, boolean persist) {
+        this.defaultLitePullConsumerImpl.commit(offsetMap, persist);
+    }
+
+    @Override
+    public void commit() {
+        this.defaultLitePullConsumerImpl.commitAll();
+    }
+
+    @Override public void commit(Map<MessageQueue, Long> offsetMap, boolean persist) {
         this.defaultLitePullConsumerImpl.commit(offsetMap, persist);
     }
 

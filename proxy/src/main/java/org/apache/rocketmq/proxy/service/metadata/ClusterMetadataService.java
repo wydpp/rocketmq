@@ -24,22 +24,23 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.apache.rocketmq.common.attribute.TopicMessageType;
 import org.apache.rocketmq.common.constant.LoggerName;
-import org.apache.rocketmq.common.protocol.route.BrokerData;
-import org.apache.rocketmq.common.statictopic.TopicConfigAndQueueMapping;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.common.thread.ThreadPoolMonitor;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.proxy.common.AbstractCacheLoader;
-import org.apache.rocketmq.proxy.common.AbstractStartAndShutdown;
+import org.apache.rocketmq.common.utils.AbstractStartAndShutdown;
+import org.apache.rocketmq.proxy.common.ProxyContext;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
 import org.apache.rocketmq.proxy.config.ProxyConfig;
-import org.apache.rocketmq.proxy.service.mqclient.MQClientAPIFactory;
+import org.apache.rocketmq.client.impl.mqclient.MQClientAPIFactory;
 import org.apache.rocketmq.proxy.service.route.TopicRouteHelper;
 import org.apache.rocketmq.proxy.service.route.TopicRouteService;
+import org.apache.rocketmq.remoting.protocol.route.BrokerData;
+import org.apache.rocketmq.remoting.protocol.statictopic.TopicConfigAndQueueMapping;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 
 public class ClusterMetadataService extends AbstractStartAndShutdown implements MetadataService {
-    protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
+    protected static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
     private static final long DEFAULT_TIMEOUT = 3000;
 
     private final TopicRouteService topicRouteService;
@@ -68,11 +69,13 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
         );
         this.topicConfigCache = CacheBuilder.newBuilder()
             .maximumSize(config.getTopicConfigCacheMaxNum())
-            .refreshAfterWrite(config.getTopicConfigCacheExpiredInSeconds(), TimeUnit.SECONDS)
+            .expireAfterAccess(config.getTopicConfigCacheExpiredSeconds(), TimeUnit.SECONDS)
+            .refreshAfterWrite(config.getTopicConfigCacheRefreshSeconds(), TimeUnit.SECONDS)
             .build(new ClusterTopicConfigCacheLoader());
         this.subscriptionGroupConfigCache = CacheBuilder.newBuilder()
             .maximumSize(config.getSubscriptionGroupConfigCacheMaxNum())
-            .refreshAfterWrite(config.getSubscriptionGroupConfigCacheExpiredInSeconds(), TimeUnit.SECONDS)
+            .expireAfterAccess(config.getSubscriptionGroupConfigCacheExpiredSeconds(), TimeUnit.SECONDS)
+            .refreshAfterWrite(config.getSubscriptionGroupConfigCacheRefreshSeconds(), TimeUnit.SECONDS)
             .build(new ClusterSubscriptionGroupConfigCacheLoader());
 
         this.init();
@@ -83,7 +86,7 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
     }
 
     @Override
-    public TopicMessageType getTopicMessageType(String topic) {
+    public TopicMessageType getTopicMessageType(ProxyContext ctx, String topic) {
         TopicConfigAndQueueMapping topicConfigAndQueueMapping;
         try {
             topicConfigAndQueueMapping = topicConfigCache.get(topic);
@@ -97,7 +100,7 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
     }
 
     @Override
-    public SubscriptionGroupConfig getSubscriptionGroupConfig(String group) {
+    public SubscriptionGroupConfig getSubscriptionGroupConfig(ProxyContext ctx, String group) {
         SubscriptionGroupConfig config;
         try {
             config = this.subscriptionGroupConfigCache.get(group);
@@ -158,7 +161,7 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
 
     protected Optional<BrokerData> findOneBroker(String topic) throws Exception {
         try {
-            return topicRouteService.getAllMessageQueueView(topic).getTopicRouteData().getBrokerDatas().stream().findAny();
+            return topicRouteService.getAllMessageQueueView(ProxyContext.createForInner(this.getClass()), topic).getTopicRouteData().getBrokerDatas().stream().findAny();
         } catch (Exception e) {
             if (TopicRouteHelper.isTopicNotExistError(e)) {
                 return Optional.empty();

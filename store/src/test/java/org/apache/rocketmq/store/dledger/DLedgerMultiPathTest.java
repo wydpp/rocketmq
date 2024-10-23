@@ -21,20 +21,25 @@ import java.io.File;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.rocketmq.common.BrokerConfig;
+import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.store.DefaultMessageStore;
 import org.apache.rocketmq.store.config.FlushDiskType;
 import org.apache.rocketmq.store.config.MessageStoreConfig;
 import org.apache.rocketmq.store.stats.BrokerStatsManager;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.Assume;
 
 import static org.awaitility.Awaitility.await;
 
 public class DLedgerMultiPathTest extends MessageStoreTestBase {
 
+
     @Test
     public void multiDirsStorageTest() throws Exception {
+        Assume.assumeFalse(MixAll.isWindows());
         String base = createBaseDir();
         String topic = UUID.randomUUID().toString();
         String peers = String.format("n0-localhost:%d", nextPort());
@@ -103,7 +108,7 @@ public class DLedgerMultiPathTest extends MessageStoreTestBase {
         storeConfig.setdLegerSelfId(selfId);
         DefaultMessageStore defaultMessageStore = new DefaultMessageStore(storeConfig, new BrokerStatsManager("DLedgerCommitLogTest", true), (topic, queueId, logicOffset, tagsCode, msgStoreTime, filterBitMap, properties) -> {
 
-        }, new BrokerConfig());
+        }, new BrokerConfig(), new ConcurrentHashMap<>());
         Assert.assertTrue(defaultMessageStore.load());
         defaultMessageStore.start();
         return defaultMessageStore;

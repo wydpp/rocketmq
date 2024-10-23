@@ -26,14 +26,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import org.apache.rocketmq.broker.client.ProducerManager;
 import org.apache.rocketmq.common.MixAll;
-import org.apache.rocketmq.common.protocol.heartbeat.HeartbeatData;
-import org.apache.rocketmq.common.protocol.heartbeat.ProducerData;
-import org.apache.rocketmq.common.protocol.route.BrokerData;
-import org.apache.rocketmq.common.protocol.route.QueueData;
-import org.apache.rocketmq.common.protocol.route.TopicRouteData;
+import org.apache.rocketmq.proxy.common.ProxyContext;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
 import org.apache.rocketmq.proxy.service.BaseServiceTest;
 import org.apache.rocketmq.proxy.service.route.MessageQueueView;
+import org.apache.rocketmq.remoting.protocol.heartbeat.HeartbeatData;
+import org.apache.rocketmq.remoting.protocol.heartbeat.ProducerData;
+import org.apache.rocketmq.remoting.protocol.route.BrokerData;
+import org.apache.rocketmq.remoting.protocol.route.QueueData;
+import org.apache.rocketmq.remoting.protocol.route.TopicRouteData;
 import org.assertj.core.util.Lists;
 import org.junit.Before;
 import org.junit.Test;
@@ -44,6 +45,7 @@ import org.mockito.Mockito;
 import static org.awaitility.Awaitility.await;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -53,17 +55,17 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
 
     @Mock
     private ProducerManager producerManager;
-
+    private ProxyContext ctx = ProxyContext.create();
     private ClusterTransactionService clusterTransactionService;
 
     @Before
     public void before() throws Throwable {
         super.before();
-        this.clusterTransactionService = new ClusterTransactionService(this.topicRouteService, this.producerManager, null,
+        this.clusterTransactionService = new ClusterTransactionService(this.topicRouteService, this.producerManager,
             this.mqClientAPIFactory);
 
-        MessageQueueView messageQueueView = new MessageQueueView(TOPIC, topicRouteData);
-        when(this.topicRouteService.getAllMessageQueueView(anyString()))
+        MessageQueueView messageQueueView = new MessageQueueView(TOPIC, topicRouteData, null);
+        when(this.topicRouteService.getAllMessageQueueView(any(), anyString()))
             .thenReturn(messageQueueView);
 
         when(mqClientAPIFactory.getClient()).thenReturn(mqClientAPIExt);
@@ -71,7 +73,7 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
 
     @Test
     public void testAddTransactionSubscription() {
-        this.clusterTransactionService.addTransactionSubscription(GROUP, TOPIC);
+        this.clusterTransactionService.addTransactionSubscription(ctx, GROUP, TOPIC);
 
         assertEquals(1, this.clusterTransactionService.getGroupClusterData().size());
         assertEquals(CLUSTER_NAME, this.clusterTransactionService.getGroupClusterData().get(GROUP).stream().findAny().get().getCluster());
@@ -79,7 +81,7 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
 
     @Test
     public void testAddTransactionSubscriptionTopicList() {
-        this.clusterTransactionService.addTransactionSubscription(GROUP, Lists.newArrayList(TOPIC + 1, TOPIC + 2));
+        this.clusterTransactionService.addTransactionSubscription(ctx, GROUP, Lists.newArrayList(TOPIC + 1, TOPIC + 2));
 
         assertEquals(1, this.clusterTransactionService.getGroupClusterData().size());
         assertEquals(CLUSTER_NAME, this.clusterTransactionService.getGroupClusterData().get(GROUP).stream().findAny().get().getCluster());
@@ -87,43 +89,45 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
 
     @Test
     public void testReplaceTransactionSubscription() {
-        this.clusterTransactionService.addTransactionSubscription(GROUP, TOPIC);
+        this.clusterTransactionService.addTransactionSubscription(ctx, GROUP, TOPIC);
 
         assertEquals(1, this.clusterTransactionService.getGroupClusterData().size());
         assertEquals(CLUSTER_NAME, this.clusterTransactionService.getGroupClusterData().get(GROUP).stream().findAny().get().getCluster());
 
         this.brokerData.setCluster(CLUSTER_NAME + 1);
-        this.clusterTransactionService.replaceTransactionSubscription(GROUP, Lists.newArrayList(TOPIC + 1));
+        this.clusterTransactionService.replaceTransactionSubscription(ctx, GROUP, Lists.newArrayList(TOPIC + 1));
         assertEquals(1, this.clusterTransactionService.getGroupClusterData().size());
         assertEquals(CLUSTER_NAME + 1, this.clusterTransactionService.getGroupClusterData().get(GROUP).stream().findAny().get().getCluster());
     }
 
     @Test
     public void testUnSubscribeAllTransactionTopic() {
-        this.clusterTransactionService.addTransactionSubscription(GROUP, TOPIC);
-        this.clusterTransactionService.unSubscribeAllTransactionTopic(GROUP);
+        this.clusterTransactionService.addTransactionSubscription(ctx, GROUP, TOPIC);
+        this.clusterTransactionService.unSubscribeAllTransactionTopic(ctx, GROUP);
 
         assertEquals(0, this.clusterTransactionService.getGroupClusterData().size());
     }
 
     @Test
     public void testScanProducerHeartBeat() throws Exception {
+        when(this.producerManager.groupOnline(anyString())).thenReturn(true);
+
         Mockito.reset(this.topicRouteService);
-        String BROKER_NAME2 = "broker-2-01";
-        String CLUSTER_NAME2 = "broker-2";
-        String BROKER_ADDR2 = "127.0.0.2:10911";
+        String brokerName2 = "broker-2-01";
+        String clusterName2 = "broker-2";
+        String brokerAddr2 = "127.0.0.2:10911";
 
         BrokerData brokerData = new BrokerData();
         QueueData queueData = new QueueData();
-        queueData.setBrokerName(BROKER_NAME2);
-        brokerData.setCluster(CLUSTER_NAME2);
-        brokerData.setBrokerName(BROKER_NAME2);
+        queueData.setBrokerName(brokerName2);
+        brokerData.setCluster(clusterName2);
+        brokerData.setBrokerName(brokerName2);
         HashMap<Long, String> brokerAddrs = new HashMap<>();
-        brokerAddrs.put(MixAll.MASTER_ID, BROKER_ADDR2);
+        brokerAddrs.put(MixAll.MASTER_ID, brokerName2);
         brokerData.setBrokerAddrs(brokerAddrs);
         topicRouteData.getQueueDatas().add(queueData);
         topicRouteData.getBrokerDatas().add(brokerData);
-        when(this.topicRouteService.getAllMessageQueueView(eq(TOPIC))).thenReturn(new MessageQueueView(TOPIC, topicRouteData));
+        when(this.topicRouteService.getAllMessageQueueView(any(), eq(TOPIC))).thenReturn(new MessageQueueView(TOPIC, topicRouteData, null));
 
         TopicRouteData clusterTopicRouteData = new TopicRouteData();
         QueueData clusterQueueData = new QueueData();
@@ -137,21 +141,21 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
         brokerAddrs.put(MixAll.MASTER_ID, BROKER_ADDR);
         clusterBrokerData.setBrokerAddrs(brokerAddrs);
         clusterTopicRouteData.setBrokerDatas(Lists.newArrayList(clusterBrokerData));
-        when(this.topicRouteService.getAllMessageQueueView(eq(CLUSTER_NAME))).thenReturn(new MessageQueueView(CLUSTER_NAME, clusterTopicRouteData));
+        when(this.topicRouteService.getAllMessageQueueView(any(), eq(CLUSTER_NAME))).thenReturn(new MessageQueueView(CLUSTER_NAME, clusterTopicRouteData, null));
 
         TopicRouteData clusterTopicRouteData2 = new TopicRouteData();
         QueueData clusterQueueData2 = new QueueData();
         BrokerData clusterBrokerData2 = new BrokerData();
 
-        clusterQueueData2.setBrokerName(BROKER_NAME2);
+        clusterQueueData2.setBrokerName(brokerName2);
         clusterTopicRouteData2.setQueueDatas(Lists.newArrayList(clusterQueueData2));
-        clusterBrokerData2.setCluster(CLUSTER_NAME2);
-        clusterBrokerData2.setBrokerName(BROKER_NAME2);
+        clusterBrokerData2.setCluster(clusterName2);
+        clusterBrokerData2.setBrokerName(brokerName2);
         brokerAddrs = new HashMap<>();
-        brokerAddrs.put(MixAll.MASTER_ID, BROKER_ADDR2);
+        brokerAddrs.put(MixAll.MASTER_ID, brokerAddr2);
         clusterBrokerData2.setBrokerAddrs(brokerAddrs);
         clusterTopicRouteData2.setBrokerDatas(Lists.newArrayList(clusterBrokerData2));
-        when(this.topicRouteService.getAllMessageQueueView(eq(CLUSTER_NAME2))).thenReturn(new MessageQueueView(CLUSTER_NAME2, clusterTopicRouteData2));
+        when(this.topicRouteService.getAllMessageQueueView(any(), eq(clusterName2))).thenReturn(new MessageQueueView(clusterName2, clusterTopicRouteData2, null));
 
         ConfigurationManager.getProxyConfig().setTransactionHeartbeatBatchNum(2);
         this.clusterTransactionService.start();
@@ -159,7 +163,7 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
 
         for (int i = 0; i < 3; i++) {
             groupSet.add(GROUP + i);
-            this.clusterTransactionService.addTransactionSubscription(GROUP + i, TOPIC);
+            this.clusterTransactionService.addTransactionSubscription(ctx, GROUP + i, TOPIC);
         }
 
         ArgumentCaptor<String> brokerAddrArgumentCaptor = ArgumentCaptor.forClass(String.class);
@@ -174,7 +178,7 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
 
         await().atMost(Duration.ofSeconds(1)).until(() -> brokerAddrArgumentCaptor.getAllValues().size() == 4);
 
-        assertEquals(Lists.newArrayList(BROKER_ADDR, BROKER_ADDR, BROKER_ADDR2, BROKER_ADDR2),
+        assertEquals(Lists.newArrayList(BROKER_ADDR, BROKER_ADDR, brokerAddr2, brokerAddr2),
             brokerAddrArgumentCaptor.getAllValues().stream().sorted().collect(Collectors.toList()));
 
         List<HeartbeatData> heartbeatDataList = heartbeatDataArgumentCaptor.getAllValues();
@@ -186,7 +190,7 @@ public class ClusterTransactionServiceTest extends BaseServiceTest {
         }
 
         assertTrue(groupSet.isEmpty());
-        assertEquals(BROKER_NAME2, this.clusterTransactionService.getBrokerNameByAddr(BROKER_ADDR2));
+        assertEquals(brokerName2, this.clusterTransactionService.getBrokerNameByAddr(brokerAddr2));
         assertEquals(BROKER_NAME, this.clusterTransactionService.getBrokerNameByAddr(BROKER_ADDR));
     }
 }
