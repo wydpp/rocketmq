@@ -33,9 +33,13 @@ public class TopicConfig {
     public static int defaultWriteQueueNums = 16;
     private static final TypeReference<Map<String, String>> ATTRIBUTES_TYPE_REFERENCE = new TypeReference<Map<String, String>>() {
     };
+    //主题名称
     private String topicName;
+    //主题的读队列数量
     private int readQueueNums = defaultReadQueueNums;
+    //主题的写队列数量
     private int writeQueueNums = defaultWriteQueueNums;
+    //主题的权限设置
     private int perm = PermName.PERM_READ | PermName.PERM_WRITE;
     private TopicFilterType topicFilterType = TopicFilterType.SINGLE_TAG;
     private int topicSysFlag = 0;
