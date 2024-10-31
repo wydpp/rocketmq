@@ -111,6 +111,10 @@ public class MessageClientIDSetter {
         return value & 0x0000FFFF;
     }
 
+    /**
+     * 生成唯一的客户端 ID
+     * @return
+     */
     public static String createUniqID() {
         char[] sb = new char[LEN * 2];
         System.arraycopy(FIX_STRING, 0, sb, 0, FIX_STRING.length);
@@ -128,6 +132,12 @@ public class MessageClientIDSetter {
         pos += 8;
         UtilAll.writeShort(sb, pos, COUNTER.getAndIncrement());
         return new String(sb);
+    }
+
+    public static void main(String[] args) {
+        for (int i = 0; i < 10; i++) {
+            System.out.println(createUniqID());
+        }
     }
 
     public static void setUniqID(final Message msg) {

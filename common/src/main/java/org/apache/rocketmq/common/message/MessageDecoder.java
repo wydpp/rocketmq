@@ -154,6 +154,13 @@ public class MessageDecoder {
         return decode(byteBuffer, readBody, true, false);
     }
 
+    /**
+     * 将 MessageExt 对象编码成二进制数据。
+     * @param messageExt
+     * @param needCompress
+     * @return
+     * @throws Exception
+     */
     public static byte[] encode(MessageExt messageExt, boolean needCompress) throws Exception {
         byte[] body = messageExt.getBody();
         byte[] topics = messageExt.getTopic().getBytes(CHARSET_UTF8);
@@ -388,6 +395,16 @@ public class MessageDecoder {
         return decode(byteBuffer, readBody, deCompressBody, isClient, isSetPropertiesString, false);
     }
 
+    /**
+     * 将字节缓冲区中的数据解码为 MessageExt 对象。
+     * @param byteBuffer
+     * @param readBody
+     * @param deCompressBody
+     * @param isClient
+     * @param isSetPropertiesString
+     * @param checkCRC
+     * @return
+     */
     public static MessageExt decode(
         java.nio.ByteBuffer byteBuffer, final boolean readBody, final boolean deCompressBody, final boolean isClient,
         final boolean isSetPropertiesString, final boolean checkCRC) {
