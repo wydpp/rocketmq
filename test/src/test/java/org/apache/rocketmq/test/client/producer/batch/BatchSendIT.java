@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 
-import org.apache.log4j.Logger;
 import org.apache.rocketmq.client.consumer.DefaultMQPullConsumer;
 import org.apache.rocketmq.client.consumer.PullResult;
 import org.apache.rocketmq.client.consumer.PullStatus;
@@ -38,6 +37,8 @@ import org.apache.rocketmq.common.message.MessageBatch;
 import org.apache.rocketmq.common.message.MessageConst;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.store.DefaultMessageStore;
 import org.apache.rocketmq.test.base.BaseConf;
 import org.apache.rocketmq.test.base.IntegrationTestBase;
@@ -51,7 +52,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class BatchSendIT extends BaseConf {
-    private static Logger logger = Logger.getLogger(TagMessageWith1ConsumerIT.class);
+    private static Logger logger = LoggerFactory.getLogger(TagMessageWith1ConsumerIT.class);
     private String topic = null;
     private Random random = new Random();
 
@@ -91,7 +92,7 @@ public class BatchSendIT extends BaseConf {
         Thread.sleep(2000);
 
         for (int i = 0; i < 3; i++) {
-            producer.viewMessage(offsetIds[random.nextInt(batchNum)]);
+            producer.viewMessage(topic, offsetIds[random.nextInt(batchNum)]);
         }
         for (int i = 0; i < 3; i++) {
             producer.viewMessage(topic, msgIds[random.nextInt(batchNum)]);
@@ -239,7 +240,7 @@ public class BatchSendIT extends BaseConf {
 
         Thread.sleep(2000);
 
-        Message messageByOffset = producer.viewMessage(offsetIds[0]);
+        Message messageByOffset = producer.viewMessage(topic, offsetIds[0]);
         Message messageByMsgId = producer.viewMessage(topic, msgIds[0]);
 
         Assert.assertEquals(message.getTopic(), messageByMsgId.getTopic());

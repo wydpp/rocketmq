@@ -96,13 +96,13 @@ import org.apache.rocketmq.client.consumer.PullStatus;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.attribute.TopicMessageType;
 import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
+import org.apache.rocketmq.common.utils.NetworkUtil;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
 import org.apache.rocketmq.proxy.grpc.interceptor.ContextInterceptor;
 import org.apache.rocketmq.proxy.grpc.interceptor.HeaderInterceptor;
-import org.apache.rocketmq.proxy.grpc.interceptor.InterceptorConstants;
+import org.apache.rocketmq.common.constant.GrpcConstants;
 import org.apache.rocketmq.proxy.grpc.v2.common.ResponseBuilder;
-import org.apache.rocketmq.remoting.common.RemotingUtil;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 import org.apache.rocketmq.test.base.BaseConf;
 import org.apache.rocketmq.test.util.MQRandomUtils;
 import org.apache.rocketmq.test.util.RandomUtils;
@@ -137,8 +137,8 @@ public class GrpcBaseIT extends BaseConf {
         brokerController2.getBrokerConfig().setTransactionCheckInterval(3 * 1000);
         brokerController3.getBrokerConfig().setTransactionCheckInterval(3 * 1000);
 
-        header.put(InterceptorConstants.CLIENT_ID, "client-id" + UUID.randomUUID());
-        header.put(InterceptorConstants.LANGUAGE, "JAVA");
+        header.put(GrpcConstants.CLIENT_ID, "client-id" + UUID.randomUUID());
+        header.put(GrpcConstants.LANGUAGE, "JAVA");
 
         String mockProxyHome = "/mock/rmq/proxy/home";
         URL mockProxyHomeURL = getClass().getClassLoader().getResource("rmq-proxy-home");
@@ -156,7 +156,9 @@ public class GrpcBaseIT extends BaseConf {
         // Set LongPollingReserveTimeInMillis to 500ms to reserve more time for IT
         ConfigurationManager.getProxyConfig().setLongPollingReserveTimeInMillis(500);
         ConfigurationManager.getProxyConfig().setRocketMQClusterName(brokerController1.getBrokerConfig().getBrokerClusterName());
+        ConfigurationManager.getProxyConfig().setHeartbeatSyncerTopicClusterName(brokerController1.getBrokerConfig().getBrokerClusterName());
         ConfigurationManager.getProxyConfig().setMinInvisibleTimeMillsForRecv(3);
+        ConfigurationManager.getProxyConfig().setGrpcClientConsumerMinLongPollingTimeoutMillis(0);
     }
 
     protected MessagingServiceGrpc.MessagingServiceStub createStub(Channel channel) {
@@ -225,6 +227,29 @@ public class GrpcBaseIT extends BaseConf {
                 .build()
             )
             .build());
+    }
+
+    public void testQueryAssignment() throws Exception {
+        String topic = initTopic();
+        String group = "group";
+
+        QueryAssignmentResponse response = blockingStub.queryAssignment(buildQueryAssignmentRequest(topic, group));
+
+        assertQueryAssignment(response, BROKER_NUM);
+    }
+
+    public void testQueryFifoAssignment() throws Exception {
+        String topic = initTopic(TopicMessageType.FIFO);
+        String group = MQRandomUtils.getRandomConsumerGroup();
+        SubscriptionGroupConfig groupConfig = brokerController1.getSubscriptionGroupManager().findSubscriptionGroupConfig(group);
+        groupConfig.setConsumeMessageOrderly(true);
+        brokerController1.getSubscriptionGroupManager().updateSubscriptionGroupConfig(groupConfig);
+        brokerController2.getSubscriptionGroupManager().updateSubscriptionGroupConfig(groupConfig);
+        brokerController3.getSubscriptionGroupManager().updateSubscriptionGroupConfig(groupConfig);
+
+        QueryAssignmentResponse response = blockingStub.queryAssignment(buildQueryAssignmentRequest(topic, group));
+
+        assertQueryAssignment(response, BROKER_NUM * QUEUE_NUMBERS);
     }
 
     public void testTransactionCheckThenCommit() {
@@ -342,7 +367,7 @@ public class GrpcBaseIT extends BaseConf {
                     .setMessageType(MessageType.NORMAL)
                     .setBodyEncoding(Encoding.GZIP)
                     .setBornTimestamp(Timestamps.fromMillis(System.currentTimeMillis()))
-                    .setBornHost(StringUtils.defaultString(RemotingUtil.getLocalAddress(), "127.0.0.1:1234"))
+                    .setBornHost(StringUtils.defaultString(NetworkUtil.getLocalAddress(), "127.0.0.1:1234"))
                     .setDeliveryTimestamp(Timestamps.fromMillis(System.currentTimeMillis() + delayTime))
                     .build())
                 .setBody(ByteString.copyFromUtf8("hello"))
@@ -592,7 +617,7 @@ public class GrpcBaseIT extends BaseConf {
                     .setQueueId(0)
                     .setMessageType(MessageType.NORMAL)
                     .setBornTimestamp(Timestamps.fromMillis(System.currentTimeMillis()))
-                    .setBornHost(StringUtils.defaultString(RemotingUtil.getLocalAddress(), "127.0.0.1:1234"))
+                    .setBornHost(StringUtils.defaultString(NetworkUtil.getLocalAddress(), "127.0.0.1:1234"))
                     .build())
                 .setBody(ByteString.copyFromUtf8("123"))
                 .build())
@@ -611,7 +636,7 @@ public class GrpcBaseIT extends BaseConf {
                     .setMessageType(MessageType.FIFO)
                     .setMessageGroup(messageGroup)
                     .setBornTimestamp(Timestamps.fromMillis(System.currentTimeMillis()))
-                    .setBornHost(StringUtils.defaultString(RemotingUtil.getLocalAddress(), "127.0.0.1:1234"))
+                    .setBornHost(StringUtils.defaultString(NetworkUtil.getLocalAddress(), "127.0.0.1:1234"))
                     .build())
                 .setBody(ByteString.copyFromUtf8("123"))
                 .build())
@@ -630,7 +655,7 @@ public class GrpcBaseIT extends BaseConf {
                     .setMessageType(MessageType.NORMAL)
                     .setBodyEncoding(Encoding.GZIP)
                     .setBornTimestamp(Timestamps.fromMillis(System.currentTimeMillis()))
-                    .setBornHost(StringUtils.defaultString(RemotingUtil.getLocalAddress(), "127.0.0.1:1234"))
+                    .setBornHost(StringUtils.defaultString(NetworkUtil.getLocalAddress(), "127.0.0.1:1234"))
                     .build())
                 .setBody(ByteString.copyFromUtf8(RandomUtils.getStringWithCharacter(messageSize)))
                 .build())
@@ -649,7 +674,7 @@ public class GrpcBaseIT extends BaseConf {
                     .setMessageType(MessageType.TRANSACTION)
                     .setOrphanedTransactionRecoveryDuration(Duration.newBuilder().setSeconds(10))
                     .setBornTimestamp(Timestamps.fromMillis(System.currentTimeMillis()))
-                    .setBornHost(StringUtils.defaultString(RemotingUtil.getLocalAddress(), "127.0.0.1:1234"))
+                    .setBornHost(StringUtils.defaultString(NetworkUtil.getLocalAddress(), "127.0.0.1:1234"))
                     .build())
                 .setBody(ByteString.copyFromUtf8("123"))
                 .build())

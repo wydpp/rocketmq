@@ -17,18 +17,38 @@
 package org.apache.rocketmq.controller;
 
 import io.netty.channel.Channel;
+import org.apache.rocketmq.common.ControllerConfig;
+import org.apache.rocketmq.controller.helper.BrokerLifecycleListener;
+import org.apache.rocketmq.controller.impl.heartbeat.BrokerLiveInfo;
+import org.apache.rocketmq.controller.impl.heartbeat.DefaultBrokerHeartbeatManager;
+import org.apache.rocketmq.controller.impl.heartbeat.RaftBrokerHeartBeatManager;
+
+import java.util.Map;
 
 public interface BrokerHeartbeatManager {
+    public static final long DEFAULT_BROKER_CHANNEL_EXPIRED_TIME = 1000 * 10;
+
+    public static BrokerHeartbeatManager newBrokerHeartbeatManager(ControllerConfig controllerConfig) {
+        if (controllerConfig.getControllerType().equals(ControllerConfig.JRAFT_CONTROLLER)) {
+            return new RaftBrokerHeartBeatManager(controllerConfig);
+        } else {
+            return new DefaultBrokerHeartbeatManager(controllerConfig);
+        }
+    }
+
+    /**
+     * initialize the resources
+     *
+     * @return
+     */
+    void initialize();
 
     /**
      * Broker new heartbeat.
      */
-    void onBrokerHeartbeat(final String clusterName, final String brokerAddr, final Integer epoch, final Long maxOffset, final Long confirmOffset);
-
-    /**
-     * Change the metadata(brokerId ..) for a broker.
-     */
-    void changeBrokerMetadata(final String clusterName, final String brokerAddr, final Long brokerId);
+    void onBrokerHeartbeat(final String clusterName, final String brokerName, final String brokerAddr,
+        final Long brokerId, final Long timeoutMillis, final Channel channel, final Integer epoch,
+        final Long maxOffset, final Long confirmOffset, final Integer electionPriority);
 
     /**
      * Start heartbeat manager.
@@ -43,13 +63,7 @@ public interface BrokerHeartbeatManager {
     /**
      * Add BrokerLifecycleListener.
      */
-    void addBrokerLifecycleListener(final BrokerLifecycleListener listener);
-
-    /**
-     * Register new broker to heartManager.
-     */
-    void registerBroker(final String clusterName, final String brokerName, final String brokerAddr, final long brokerId,
-                        final Long timeoutMillis, final Channel channel, final Integer epoch, final Long maxOffset);
+    void registerBrokerLifecycleListener(final BrokerLifecycleListener listener);
 
     /**
      * Broker channel close
@@ -59,17 +73,17 @@ public interface BrokerHeartbeatManager {
     /**
      * Get broker live information by clusterName and brokerAddr
      */
-    BrokerLiveInfo getBrokerLiveInfo(String clusterName, String brokerAddr);
+    BrokerLiveInfo getBrokerLiveInfo(String clusterName, String brokerName, Long brokerId);
 
     /**
      * Check whether broker active
      */
-    boolean isBrokerActive(final String clusterName, final String brokerAddr);
+    boolean isBrokerActive(final String clusterName, final String brokerName, final Long brokerId);
 
-    interface BrokerLifecycleListener {
-        /**
-         * Trigger when broker inactive.
-         */
-        void onBrokerInactive(final String clusterName, final String brokerName, final String brokerAddress, final long brokerId);
-    }
+    /**
+     * Count the number of active brokers in each broker-set of each cluster
+     *
+     * @return active brokers count
+     */
+    Map<String/*cluster*/, Map<String/*broker-set*/, Integer/*active broker num*/>> getActiveBrokersNum();
 }

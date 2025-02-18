@@ -16,7 +16,6 @@
  */
 package org.apache.rocketmq.store;
 
-
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -77,7 +76,7 @@ public class MultiPathMappedFileQueue extends MappedFileQueue {
     }
 
     @Override
-    protected MappedFile tryCreateMappedFile(long createOffset) {
+    public MappedFile tryCreateMappedFile(long createOffset) {
         long fileIdx = createOffset / this.mappedFileSize;
         Set<String> storePath = getPaths();
         Set<String> readonlyPathSet = getReadonlyPaths();
@@ -113,8 +112,7 @@ public class MultiPathMappedFileQueue extends MappedFileQueue {
             mf.destroy(1000 * 3);
         }
         this.mappedFiles.clear();
-        this.flushedWhere = 0;
-
+        this.setFlushedWhere(0);
 
         Set<String> storePathSet = getPaths();
         storePathSet.addAll(getReadonlyPaths());

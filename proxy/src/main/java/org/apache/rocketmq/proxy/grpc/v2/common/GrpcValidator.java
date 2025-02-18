@@ -26,12 +26,12 @@ import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.common.topic.TopicValidator;
-import org.apache.rocketmq.logging.InternalLogger;
-import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
 
 public class GrpcValidator {
-    protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
+    protected static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
 
     protected static final Object INSTANCE_CREATE_LOCK = new Object();
     protected static volatile GrpcValidator instance;
@@ -48,38 +48,32 @@ public class GrpcValidator {
     }
 
     public void validateTopic(Resource topic) {
-        validateTopic(GrpcConverter.getInstance().wrapResourceWithNamespace(topic));
+        validateTopic(topic.getName());
     }
 
     public void validateTopic(String topicName) {
-        if (StringUtils.isBlank(topicName)) {
-            throw new GrpcProxyException(Code.ILLEGAL_TOPIC, "topic name cannot be empty");
-        }
-        if (TopicValidator.isSystemTopic(topicName)) {
-            throw new GrpcProxyException(Code.ILLEGAL_TOPIC, "cannot access system topic");
-        }
         try {
             Validators.checkTopic(topicName);
         } catch (MQClientException mqClientException) {
             throw new GrpcProxyException(Code.ILLEGAL_TOPIC, mqClientException.getErrorMessage());
         }
+        if (TopicValidator.isSystemTopic(topicName)) {
+            throw new GrpcProxyException(Code.ILLEGAL_TOPIC, "cannot access system topic");
+        }
     }
 
     public void validateConsumerGroup(Resource consumerGroup) {
-        validateConsumerGroup(GrpcConverter.getInstance().wrapResourceWithNamespace(consumerGroup));
+        validateConsumerGroup(consumerGroup.getName());
     }
 
     public void validateConsumerGroup(String consumerGroupName) {
-        if (StringUtils.isBlank(consumerGroupName)) {
-            throw new GrpcProxyException(Code.ILLEGAL_CONSUMER_GROUP, "consumer group cannot be empty");
-        }
-        if (MixAll.isSysConsumerGroup(consumerGroupName)) {
-            throw new GrpcProxyException(Code.ILLEGAL_CONSUMER_GROUP, "cannot use system consumer group");
-        }
         try {
             Validators.checkGroup(consumerGroupName);
         } catch (MQClientException mqClientException) {
             throw new GrpcProxyException(Code.ILLEGAL_CONSUMER_GROUP, mqClientException.getErrorMessage());
+        }
+        if (MixAll.isSysConsumerGroup(consumerGroupName)) {
+            throw new GrpcProxyException(Code.ILLEGAL_CONSUMER_GROUP, "cannot use system consumer group");
         }
     }
 

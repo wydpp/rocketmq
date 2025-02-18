@@ -19,6 +19,7 @@ package org.apache.rocketmq.proxy.grpc.v2.common;
 
 import apache.rocketmq.v2.Address;
 import apache.rocketmq.v2.AddressScheme;
+import apache.rocketmq.v2.ClientType;
 import apache.rocketmq.v2.CustomizedBackoff;
 import apache.rocketmq.v2.Endpoints;
 import apache.rocketmq.v2.ExponentialBackoff;
@@ -29,21 +30,29 @@ import com.google.protobuf.util.Durations;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import org.apache.rocketmq.common.subscription.CustomizedRetryPolicy;
-import org.apache.rocketmq.common.subscription.ExponentialRetryPolicy;
-import org.apache.rocketmq.common.subscription.GroupRetryPolicy;
-import org.apache.rocketmq.common.subscription.GroupRetryPolicyType;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
+import org.apache.rocketmq.broker.client.ConsumerGroupInfo;
+import org.apache.rocketmq.common.ServiceThread;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.utils.StartAndShutdown;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.proxy.common.ProxyContext;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
 import org.apache.rocketmq.proxy.config.MetricCollectorMode;
 import org.apache.rocketmq.proxy.config.ProxyConfig;
 import org.apache.rocketmq.proxy.processor.MessagingProcessor;
+import org.apache.rocketmq.remoting.protocol.subscription.CustomizedRetryPolicy;
+import org.apache.rocketmq.remoting.protocol.subscription.ExponentialRetryPolicy;
+import org.apache.rocketmq.remoting.protocol.subscription.GroupRetryPolicy;
+import org.apache.rocketmq.remoting.protocol.subscription.GroupRetryPolicyType;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 
-public class GrpcClientSettingsManager {
-
+public class GrpcClientSettingsManager extends ServiceThread implements StartAndShutdown {
+    private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
     protected static final Map<String, Settings> CLIENT_SETTINGS_MAP = new ConcurrentHashMap<>();
 
     private final MessagingProcessor messagingProcessor;
@@ -52,17 +61,20 @@ public class GrpcClientSettingsManager {
         this.messagingProcessor = messagingProcessor;
     }
 
+    public Settings getRawClientSettings(String clientId) {
+        return CLIENT_SETTINGS_MAP.get(clientId);
+    }
+
     public Settings getClientSettings(ProxyContext ctx) {
         String clientId = ctx.getClientID();
-        Settings settings = CLIENT_SETTINGS_MAP.get(clientId);
+        Settings settings = getRawClientSettings(clientId);
         if (settings == null) {
             return null;
         }
         if (settings.hasPublishing()) {
             settings = mergeProducerData(settings);
         } else if (settings.hasSubscription()) {
-            settings = mergeSubscriptionData(ctx, settings,
-                GrpcConverter.getInstance().wrapResourceWithNamespace(settings.getSubscription().getGroup()));
+            settings = mergeSubscriptionData(ctx, settings, settings.getSubscription().getGroup().getName());
         }
         return mergeMetric(settings);
     }
@@ -129,7 +141,7 @@ public class GrpcClientSettingsManager {
 
         resultSettingsBuilder.getSubscriptionBuilder()
             .setReceiveBatchSize(config.getGrpcClientConsumerLongPollingBatchSize())
-            .setLongPollingTimeout(Durations.fromMillis(config.getGrpcClientConsumerLongPollingTimeoutMillis()))
+            .setLongPollingTimeout(Durations.fromMillis(config.getGrpcClientConsumerMaxLongPollingTimeoutMillis()))
             .setFifo(groupConfig.isConsumeMessageOrderly());
 
         resultSettingsBuilder.getBackoffPolicyBuilder().setMaxAttempts(groupConfig.getRetryMaxTimes() + 1);
@@ -168,7 +180,7 @@ public class GrpcClientSettingsManager {
             .build();
     }
 
-    public void updateClientSettings(String clientId, Settings settings) {
+    public void updateClientSettings(ProxyContext ctx, String clientId, Settings settings) {
         if (settings.hasSubscription()) {
             settings = createDefaultConsumerSettingsBuilder().mergeFrom(settings).build();
         }
@@ -180,20 +192,57 @@ public class GrpcClientSettingsManager {
             .toBuilder();
     }
 
-    public void removeClientSettings(String clientId) {
-        CLIENT_SETTINGS_MAP.remove(clientId);
+    public Settings removeAndGetRawClientSettings(String clientId) {
+        return CLIENT_SETTINGS_MAP.remove(clientId);
     }
 
     public Settings removeAndGetClientSettings(ProxyContext ctx) {
         String clientId = ctx.getClientID();
-        Settings settings = CLIENT_SETTINGS_MAP.remove(clientId);
+        Settings settings = this.removeAndGetRawClientSettings(clientId);
         if (settings == null) {
             return null;
         }
         if (settings.hasSubscription()) {
-            settings = mergeSubscriptionData(ctx, settings,
-                GrpcConverter.getInstance().wrapResourceWithNamespace(settings.getSubscription().getGroup()));
+            settings = mergeSubscriptionData(ctx, settings, settings.getSubscription().getGroup().getName());
         }
         return mergeMetric(settings);
+    }
+
+    @Override
+    public String getServiceName() {
+        return "GrpcClientSettingsManagerCleaner";
+    }
+
+    @Override
+    public void run() {
+        while (!this.isStopped()) {
+            this.waitForRunning(TimeUnit.SECONDS.toMillis(5));
+        }
+    }
+
+    @Override
+    protected void onWaitEnd() {
+        Set<String> clientIdSet = CLIENT_SETTINGS_MAP.keySet();
+        for (String clientId : clientIdSet) {
+            try {
+                CLIENT_SETTINGS_MAP.computeIfPresent(clientId, (clientIdKey, settings) -> {
+                    if (!settings.getClientType().equals(ClientType.PUSH_CONSUMER) && !settings.getClientType().equals(ClientType.SIMPLE_CONSUMER)) {
+                        return settings;
+                    }
+                    String consumerGroup = settings.getSubscription().getGroup().getName();
+                    ConsumerGroupInfo consumerGroupInfo = this.messagingProcessor.getConsumerGroupInfo(
+                        ProxyContext.createForInner(this.getClass()),
+                        consumerGroup
+                    );
+                    if (consumerGroupInfo == null || consumerGroupInfo.findChannel(clientId) == null) {
+                        log.info("remove unused grpc client settings. group:{}, settings:{}", consumerGroupInfo, settings);
+                        return null;
+                    }
+                    return settings;
+                });
+            } catch (Throwable t) {
+                log.error("check expired grpc client settings failed. clientId:{}", clientId, t);
+            }
+        }
     }
 }

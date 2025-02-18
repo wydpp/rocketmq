@@ -24,10 +24,10 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.admin.RollbackStats;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.ResponseCode;
 import org.apache.rocketmq.remoting.RPCHook;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.admin.RollbackStats;
 import org.apache.rocketmq.tools.admin.DefaultMQAdminExt;
 import org.apache.rocketmq.tools.command.SubCommand;
 import org.apache.rocketmq.tools.command.SubCommandException;
@@ -41,7 +41,7 @@ public class SkipAccumulationSubCommand implements SubCommand {
 
     @Override
     public String commandDesc() {
-        return "Skip all messages that are accumulated (not consumed) currently";
+        return "Skip all messages that are accumulated (not consumed) currently.";
     }
 
     @Override
@@ -57,6 +57,10 @@ public class SkipAccumulationSubCommand implements SubCommand {
         opt = new Option("f", "force", true, "set the force rollback by timestamp switch[true|false]");
         opt.setRequired(false);
         options.addOption(opt);
+
+        opt = new Option("c", "cluster", true, "Cluster name or lmq parent topic, lmq is used to find the route.");
+        opt.setRequired(false);
+        options.addOption(opt);
         return options;
     }
 
@@ -68,6 +72,7 @@ public class SkipAccumulationSubCommand implements SubCommand {
         try {
             String group = commandLine.getOptionValue("g").trim();
             String topic = commandLine.getOptionValue("t").trim();
+            String clusterName = commandLine.hasOption('c') ? commandLine.getOptionValue('c').trim() : null;
             boolean force = true;
             if (commandLine.hasOption('f')) {
                 force = Boolean.valueOf(commandLine.getOptionValue("f").trim());
@@ -76,7 +81,7 @@ public class SkipAccumulationSubCommand implements SubCommand {
             defaultMQAdminExt.start();
             Map<MessageQueue, Long> offsetTable;
             try {
-                offsetTable = defaultMQAdminExt.resetOffsetByTimestamp(topic, group, timestamp, force);
+                offsetTable = defaultMQAdminExt.resetOffsetByTimestamp(clusterName, topic, group, timestamp, force);
             } catch (MQClientException e) {
                 if (ResponseCode.CONSUMER_NOT_ONLINE == e.getResponseCode()) {
                     List<RollbackStats> rollbackStatsList = defaultMQAdminExt.resetOffsetByTimestampOld(group, topic, timestamp, force);

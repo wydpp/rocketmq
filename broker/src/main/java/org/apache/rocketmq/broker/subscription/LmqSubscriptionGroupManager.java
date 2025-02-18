@@ -18,7 +18,7 @@ package org.apache.rocketmq.broker.subscription;
 
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.common.MixAll;
-import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
+import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfig;
 
 public class LmqSubscriptionGroupManager extends SubscriptionGroupManager {
 
@@ -42,5 +42,14 @@ public class LmqSubscriptionGroupManager extends SubscriptionGroupManager {
             return;
         }
         super.updateSubscriptionGroupConfig(config);
+    }
+
+    @Override
+    public boolean containsSubscriptionGroup(String group) {
+        if (MixAll.isLmq(group)) {
+            return true;
+        } else {
+            return super.containsSubscriptionGroup(group);
+        }
     }
 }

@@ -25,7 +25,6 @@ import org.apache.rocketmq.client.consumer.rebalance.AllocateMessageQueueAverage
 import org.apache.rocketmq.client.consumer.store.OffsetStore;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.impl.consumer.DefaultLitePullConsumerImpl;
-import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.client.trace.AsyncTraceDispatcher;
 import org.apache.rocketmq.client.trace.TraceDispatcher;
 import org.apache.rocketmq.client.trace.hook.ConsumeMessageTraceHookImpl;
@@ -34,14 +33,17 @@ import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.NamespaceUtil;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
-import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.RPCHook;
+import org.apache.rocketmq.remoting.protocol.NamespaceUtil;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
+
+import static org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData.SUB_ALL;
 
 public class DefaultLitePullConsumer extends ClientConfig implements LitePullConsumer {
 
-    private final InternalLogger log = ClientLogger.getLog();
+    private static final Logger log = LoggerFactory.getLogger(DefaultLitePullConsumer.class);
 
     private final DefaultLitePullConsumerImpl defaultLitePullConsumerImpl;
 
@@ -167,21 +169,13 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      */
     private TraceDispatcher traceDispatcher = null;
 
-    /**
-     * The flag for message trace
-     */
-    private boolean enableMsgTrace = false;
-
-    /**
-     * The name value of message trace topic.If you don't config,you can use the default trace topic name.
-     */
-    private String customizedTraceTopic;
+    private RPCHook rpcHook;
 
     /**
      * Default constructor.
      */
     public DefaultLitePullConsumer() {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, null);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, null);
     }
 
     /**
@@ -190,7 +184,7 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param consumerGroup Consumer group.
      */
     public DefaultLitePullConsumer(final String consumerGroup) {
-        this(null, consumerGroup, null);
+        this(consumerGroup, null);
     }
 
     /**
@@ -199,28 +193,33 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param rpcHook RPC hook to execute before each remoting command.
      */
     public DefaultLitePullConsumer(RPCHook rpcHook) {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
     }
 
     /**
      * Constructor specifying consumer group, RPC hook
      *
      * @param consumerGroup Consumer group.
-     * @param rpcHook RPC hook to execute before each remoting command.
+     * @param rpcHook       RPC hook to execute before each remoting command.
      */
     public DefaultLitePullConsumer(final String consumerGroup, RPCHook rpcHook) {
-        this(null, consumerGroup, rpcHook);
+        this.consumerGroup = consumerGroup;
+        this.rpcHook = rpcHook;
+        this.enableStreamRequestType = true;
+        defaultLitePullConsumerImpl = new DefaultLitePullConsumerImpl(this, rpcHook);
     }
 
     /**
      * Constructor specifying namespace, consumer group and RPC hook.
      *
      * @param consumerGroup Consumer group.
-     * @param rpcHook RPC hook to execute before each remoting command.
+     * @param rpcHook       RPC hook to execute before each remoting command.
      */
+    @Deprecated
     public DefaultLitePullConsumer(final String namespace, final String consumerGroup, RPCHook rpcHook) {
         this.namespace = namespace;
         this.consumerGroup = consumerGroup;
+        this.rpcHook = rpcHook;
         this.enableStreamRequestType = true;
         defaultLitePullConsumerImpl = new DefaultLitePullConsumerImpl(this, rpcHook);
     }
@@ -253,6 +252,11 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
     }
 
     @Override
+    public void subscribe(String topic) throws MQClientException {
+        this.subscribe(topic, SUB_ALL);
+    }
+
+    @Override
     public void subscribe(String topic, String subExpression) throws MQClientException {
         this.defaultLitePullConsumerImpl.subscribe(withNamespace(topic), subExpression);
     }
@@ -266,6 +270,7 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
     public void unsubscribe(String topic) {
         this.defaultLitePullConsumerImpl.unsubscribe(withNamespace(topic));
     }
+
     @Override
     public void assign(Collection<MessageQueue> messageQueues) {
         defaultLitePullConsumerImpl.assign(queuesWithNamespace(messageQueues));
@@ -317,18 +322,25 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
         this.defaultLitePullConsumerImpl.registerTopicMessageQueueChangeListener(withNamespace(topic), topicMessageQueueChangeListener);
     }
 
+    @Deprecated
     @Override
     public void commitSync() {
         this.defaultLitePullConsumerImpl.commitAll();
     }
 
-    /**
-     * Offset specified by batch commit
-     * @param offsetMap
-     * @param persist
-     */
+    @Deprecated
     @Override
     public void commitSync(Map<MessageQueue, Long> offsetMap, boolean persist) {
+        this.defaultLitePullConsumerImpl.commit(offsetMap, persist);
+    }
+
+    @Override
+    public void commit() {
+        this.defaultLitePullConsumerImpl.commitAll();
+    }
+
+    @Override
+    public void commit(Map<MessageQueue, Long> offsetMap, boolean persist) {
         this.defaultLitePullConsumerImpl.commit(offsetMap, persist);
     }
 
@@ -351,10 +363,10 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
      * @param messageQueueListener
      */
     @Override
-    public void subscribe(String topic, String subExpression, MessageQueueListener messageQueueListener) throws MQClientException {
+    public void subscribe(String topic, String subExpression,
+        MessageQueueListener messageQueueListener) throws MQClientException {
         this.defaultLitePullConsumerImpl.subscribe(withNamespace(topic), subExpression, messageQueueListener);
     }
-
 
     @Override
     public void commit(final Set<MessageQueue> messageQueues, boolean persist) {
@@ -576,15 +588,12 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
         return traceDispatcher;
     }
 
-    public void setCustomizedTraceTopic(String customizedTraceTopic) {
-        this.customizedTraceTopic = customizedTraceTopic;
-    }
-
     private void setTraceDispatcher() {
-        if (isEnableMsgTrace()) {
+        if (enableTrace) {
             try {
-                AsyncTraceDispatcher traceDispatcher = new AsyncTraceDispatcher(consumerGroup, TraceDispatcher.Type.CONSUME, customizedTraceTopic, null);
+                AsyncTraceDispatcher traceDispatcher = new AsyncTraceDispatcher(consumerGroup, TraceDispatcher.Type.CONSUME, getTraceMsgBatchNum(), traceTopic, rpcHook);
                 traceDispatcher.getTraceProducer().setUseTLS(this.isUseTLS());
+                traceDispatcher.setNamespaceV2(namespaceV2);
                 this.traceDispatcher = traceDispatcher;
                 this.defaultLitePullConsumerImpl.registerConsumeMessageHook(
                     new ConsumeMessageTraceHookImpl(traceDispatcher));
@@ -595,14 +604,18 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
     }
 
     public String getCustomizedTraceTopic() {
-        return customizedTraceTopic;
+        return traceTopic;
+    }
+
+    public void setCustomizedTraceTopic(String customizedTraceTopic) {
+        this.traceTopic = customizedTraceTopic;
     }
 
     public boolean isEnableMsgTrace() {
-        return enableMsgTrace;
+        return enableTrace;
     }
 
     public void setEnableMsgTrace(boolean enableMsgTrace) {
-        this.enableMsgTrace = enableMsgTrace;
+        this.enableTrace = enableMsgTrace;
     }
 }

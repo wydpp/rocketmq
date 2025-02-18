@@ -18,10 +18,13 @@ package org.apache.rocketmq.store.dledger;
 
 import java.time.Duration;
 import java.util.UUID;
+
+import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.store.DefaultMessageStore;
 import org.apache.rocketmq.store.StoreTestBase;
 import org.apache.rocketmq.store.config.StorePathConfigHelper;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import static org.awaitility.Awaitility.await;
@@ -30,6 +33,8 @@ public class MixCommitlogTest extends MessageStoreTestBase {
 
     @Test
     public void testFallBehindCQ() throws Exception {
+        Assume.assumeFalse(MixAll.isWindows());
+        Assume.assumeFalse(MixAll.isMac());
         String base = createBaseDir();
         String topic = UUID.randomUUID().toString();
         String peers = String.format("n0-localhost:%d", nextPort());
@@ -71,6 +76,7 @@ public class MixCommitlogTest extends MessageStoreTestBase {
 
     @Test
     public void testPutAndGet() throws Exception {
+        Assume.assumeFalse(MixAll.isMac());
         String base = createBaseDir();
         String topic = UUID.randomUUID().toString();
         String peers = String.format("n0-localhost:%d", nextPort());
@@ -134,6 +140,7 @@ public class MixCommitlogTest extends MessageStoreTestBase {
 
     @Test
     public void testDeleteExpiredFiles() throws Exception {
+        Assume.assumeFalse(MixAll.isMac());
         String base = createBaseDir();
         String topic = UUID.randomUUID().toString();
         String peers = String.format("n0-localhost:%d", nextPort());

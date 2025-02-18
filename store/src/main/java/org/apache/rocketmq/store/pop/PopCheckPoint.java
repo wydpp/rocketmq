@@ -20,7 +20,7 @@ import com.alibaba.fastjson.annotation.JSONField;
 import java.util.ArrayList;
 import java.util.List;
 
-public class PopCheckPoint {
+public class PopCheckPoint implements Comparable<PopCheckPoint> {
     @JSONField(name = "so")
     private long startOffset;
     @JSONField(name = "pt")
@@ -32,7 +32,7 @@ public class PopCheckPoint {
     @JSONField(name = "n")
     private byte num;
     @JSONField(name = "q")
-    private byte queueId;
+    private int queueId;
     @JSONField(name = "t")
     private String topic;
     @JSONField(name = "c")
@@ -43,6 +43,8 @@ public class PopCheckPoint {
     private List<Integer> queueOffsetDiff;
     @JSONField(name = "bn")
     String brokerName;
+    @JSONField(name = "rp")
+    String rePutTimes; // ck rePut times
 
     public long getReviveOffset() {
         return reviveOffset;
@@ -57,10 +59,6 @@ public class PopCheckPoint {
     }
 
     public void setStartOffset(long startOffset) {
-        this.startOffset = startOffset;
-    }
-
-    public void getStartOffset(long startOffset) {
         this.startOffset = startOffset;
     }
 
@@ -100,11 +98,11 @@ public class PopCheckPoint {
         this.num = num;
     }
 
-    public byte getQueueId() {
+    public int getQueueId() {
         return queueId;
     }
 
-    public void setQueueId(byte queueId) {
+    public void setQueueId(int queueId) {
         this.queueId = queueId;
     }
 
@@ -138,6 +136,14 @@ public class PopCheckPoint {
 
     public void setBrokerName(String brokerName) {
         this.brokerName = brokerName;
+    }
+
+    public String getRePutTimes() {
+        return rePutTimes;
+    }
+
+    public void setRePutTimes(String rePutTimes) {
+        this.rePutTimes = rePutTimes;
     }
 
     public void addDiff(int diff) {
@@ -175,10 +181,25 @@ public class PopCheckPoint {
         return startOffset + queueOffsetDiff.get(index);
     }
 
+    public int parseRePutTimes() {
+        if (null == rePutTimes) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(rePutTimes);
+        } catch (Exception e) {
+        }
+        return Byte.MAX_VALUE;
+    }
+
     @Override
     public String toString() {
         return "PopCheckPoint [topic=" + topic + ", cid=" + cid + ", queueId=" + queueId + ", startOffset=" + startOffset + ", bitMap=" + bitMap + ", num=" + num + ", reviveTime=" + getReviveTime()
-            + ", reviveOffset=" + reviveOffset + ", diff=" + queueOffsetDiff + ", brokerName=" + brokerName + "]";
+            + ", reviveOffset=" + reviveOffset + ", diff=" + queueOffsetDiff + ", brokerName=" + brokerName + ", rePutTimes=" + rePutTimes + "]";
     }
 
+    @Override
+    public int compareTo(PopCheckPoint o) {
+        return (int) (this.getStartOffset() - o.getStartOffset());
+    }
 }

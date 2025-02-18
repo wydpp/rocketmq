@@ -17,12 +17,15 @@
 
 package org.apache.rocketmq.store.stats;
 
+import org.apache.rocketmq.common.topic.TopicValidator;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import static org.apache.rocketmq.common.stats.Stats.BROKER_PUT_NUMS;
+import static org.apache.rocketmq.common.stats.Stats.GROUP_ACK_NUMS;
+import static org.apache.rocketmq.common.stats.Stats.GROUP_CK_NUMS;
 import static org.apache.rocketmq.common.stats.Stats.GROUP_GET_FALL_SIZE;
 import static org.apache.rocketmq.common.stats.Stats.GROUP_GET_FALL_TIME;
 import static org.apache.rocketmq.common.stats.Stats.GROUP_GET_LATENCY;
@@ -33,6 +36,7 @@ import static org.apache.rocketmq.common.stats.Stats.QUEUE_GET_SIZE;
 import static org.apache.rocketmq.common.stats.Stats.QUEUE_PUT_NUMS;
 import static org.apache.rocketmq.common.stats.Stats.QUEUE_PUT_SIZE;
 import static org.apache.rocketmq.common.stats.Stats.SNDBCK_PUT_NUMS;
+import static org.apache.rocketmq.common.stats.Stats.TOPIC_PUT_LATENCY;
 import static org.apache.rocketmq.common.stats.Stats.TOPIC_PUT_NUMS;
 import static org.apache.rocketmq.common.stats.Stats.TOPIC_PUT_SIZE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,10 +47,11 @@ public class BrokerStatsManagerTest {
     private static final String TOPIC = "TOPIC_TEST";
     private static final Integer QUEUE_ID = 0;
     private static final String GROUP_NAME = "GROUP_TEST";
+    private static final String CLUSTER_NAME = "DefaultCluster";
 
     @Before
     public void init() {
-        brokerStatsManager = new BrokerStatsManager("DefaultCluster", true);
+        brokerStatsManager = new BrokerStatsManager(CLUSTER_NAME, true);
         brokerStatsManager.start();
     }
 
@@ -128,7 +133,7 @@ public class BrokerStatsManagerTest {
     @Test
     public void testIncBrokerPutNums() {
         brokerStatsManager.incBrokerPutNums();
-        assertThat(brokerStatsManager.getStatsItem(BROKER_PUT_NUMS, "DefaultCluster").getValue().doubleValue()).isEqualTo(1L);
+        assertThat(brokerStatsManager.getStatsItem(BROKER_PUT_NUMS, CLUSTER_NAME).getValue().doubleValue()).isEqualTo(1L);
     }
 
     @Test
@@ -137,8 +142,11 @@ public class BrokerStatsManagerTest {
         brokerStatsManager.incTopicPutSize(TOPIC, 100);
         brokerStatsManager.incQueuePutNums(TOPIC, QUEUE_ID);
         brokerStatsManager.incQueuePutSize(TOPIC, QUEUE_ID, 100);
+        brokerStatsManager.incTopicPutLatency(TOPIC, QUEUE_ID, 10);
         brokerStatsManager.incGroupGetNums(GROUP_NAME, TOPIC, 1);
         brokerStatsManager.incGroupGetSize(GROUP_NAME, TOPIC, 100);
+        brokerStatsManager.incGroupCkNums(GROUP_NAME, TOPIC, 1);
+        brokerStatsManager.incGroupAckNums(GROUP_NAME, TOPIC, 1);
         brokerStatsManager.incQueueGetNums(GROUP_NAME, TOPIC, QUEUE_ID, 1);
         brokerStatsManager.incQueueGetSize(GROUP_NAME, TOPIC, QUEUE_ID, 100);
         brokerStatsManager.incSendBackNums(GROUP_NAME, TOPIC);
@@ -160,6 +168,9 @@ public class BrokerStatsManagerTest {
         Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_GET_LATENCY, "1@" + TOPIC + "@" + GROUP_NAME));
         Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_GET_FALL_SIZE, "1@" + TOPIC + "@" + GROUP_NAME));
         Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_GET_FALL_TIME, "1@" + TOPIC + "@" + GROUP_NAME));
+        Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_CK_NUMS, TOPIC + "@" + GROUP_NAME));
+        Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_ACK_NUMS, TOPIC + "@" + GROUP_NAME));
+        Assert.assertNull(brokerStatsManager.getStatsItem(TOPIC_PUT_LATENCY, QUEUE_ID + "@" + TOPIC));
     }
 
     @Test
@@ -172,6 +183,8 @@ public class BrokerStatsManagerTest {
         brokerStatsManager.incGroupGetLatency(GROUP_NAME, TOPIC, 1, 1);
         brokerStatsManager.recordDiskFallBehindTime(GROUP_NAME, TOPIC, 1, 11L);
         brokerStatsManager.recordDiskFallBehindSize(GROUP_NAME, TOPIC, 1, 11L);
+        brokerStatsManager.incGroupCkNums(GROUP_NAME, TOPIC, 1);
+        brokerStatsManager.incGroupAckNums(GROUP_NAME, TOPIC, 1);
 
         brokerStatsManager.onGroupDeleted(GROUP_NAME);
 
@@ -183,5 +196,33 @@ public class BrokerStatsManagerTest {
         Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_GET_LATENCY, "1@" + TOPIC + "@" + GROUP_NAME));
         Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_GET_FALL_SIZE, "1@" + TOPIC + "@" + GROUP_NAME));
         Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_GET_FALL_TIME, "1@" + TOPIC + "@" + GROUP_NAME));
+        Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_CK_NUMS, TOPIC + "@" + GROUP_NAME));
+        Assert.assertNull(brokerStatsManager.getStatsItem(GROUP_ACK_NUMS, TOPIC + "@" + GROUP_NAME));
+    }
+
+    @Test
+    public void testIncBrokerGetNumsWithoutSystemTopic() {
+        brokerStatsManager.incBrokerGetNumsWithoutSystemTopic(TOPIC, 1);
+        assertThat(brokerStatsManager.getStatsItem(BrokerStatsManager.BROKER_GET_NUMS_WITHOUT_SYSTEM_TOPIC, CLUSTER_NAME)
+            .getValue().doubleValue()).isEqualTo(1L);
+        assertThat(brokerStatsManager.getBrokerGetNumsWithoutSystemTopic()).isEqualTo(1L);
+
+        brokerStatsManager.incBrokerGetNumsWithoutSystemTopic(TopicValidator.RMQ_SYS_TRACE_TOPIC, 1);
+        assertThat(brokerStatsManager.getStatsItem(BrokerStatsManager.BROKER_GET_NUMS_WITHOUT_SYSTEM_TOPIC, CLUSTER_NAME)
+            .getValue().doubleValue()).isEqualTo(1L);
+        assertThat(brokerStatsManager.getBrokerGetNumsWithoutSystemTopic()).isEqualTo(1L);
+    }
+
+    @Test
+    public void testIncBrokerPutNumsWithoutSystemTopic() {
+        brokerStatsManager.incBrokerPutNumsWithoutSystemTopic(TOPIC, 1);
+        assertThat(brokerStatsManager.getStatsItem(BrokerStatsManager.BROKER_PUT_NUMS_WITHOUT_SYSTEM_TOPIC, CLUSTER_NAME)
+            .getValue().doubleValue()).isEqualTo(1L);
+        assertThat(brokerStatsManager.getBrokerPutNumsWithoutSystemTopic()).isEqualTo(1L);
+
+        brokerStatsManager.incBrokerPutNumsWithoutSystemTopic(TopicValidator.RMQ_SYS_TRACE_TOPIC, 1);
+        assertThat(brokerStatsManager.getStatsItem(BrokerStatsManager.BROKER_PUT_NUMS_WITHOUT_SYSTEM_TOPIC, CLUSTER_NAME)
+            .getValue().doubleValue()).isEqualTo(1L);
+        assertThat(brokerStatsManager.getBrokerPutNumsWithoutSystemTopic()).isEqualTo(1L);
     }
 }

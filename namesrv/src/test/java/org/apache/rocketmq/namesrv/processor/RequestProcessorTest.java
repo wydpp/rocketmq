@@ -21,32 +21,34 @@ import io.netty.channel.ChannelHandlerContext;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
-
+import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.protocol.body.RegisterBrokerBody;
 import org.apache.rocketmq.common.namesrv.NamesrvConfig;
-import org.apache.rocketmq.common.namesrv.RegisterBrokerResult;
-import org.apache.rocketmq.common.protocol.RequestCode;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.body.TopicConfigAndMappingSerializeWrapper;
-import org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper;
-import org.apache.rocketmq.common.protocol.header.namesrv.DeleteKVConfigRequestHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.GetKVConfigRequestHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.GetKVConfigResponseHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.PutKVConfigRequestHeader;
-import org.apache.rocketmq.common.protocol.header.namesrv.RegisterBrokerRequestHeader;
-import org.apache.rocketmq.common.protocol.route.BrokerData;
-import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
 import org.apache.rocketmq.namesrv.NamesrvController;
 import org.apache.rocketmq.namesrv.routeinfo.RouteInfoManager;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 import org.apache.rocketmq.remoting.netty.NettyServerConfig;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.RequestCode;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.body.RegisterBrokerBody;
+import org.apache.rocketmq.remoting.protocol.body.TopicConfigAndMappingSerializeWrapper;
+import org.apache.rocketmq.remoting.protocol.body.TopicConfigSerializeWrapper;
+import org.apache.rocketmq.remoting.protocol.header.namesrv.DeleteKVConfigRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.namesrv.GetKVConfigRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.namesrv.GetKVConfigResponseHeader;
+import org.apache.rocketmq.remoting.protocol.header.namesrv.PutKVConfigRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.namesrv.RegisterBrokerRequestHeader;
+import org.apache.rocketmq.remoting.protocol.namesrv.RegisterBrokerResult;
+import org.apache.rocketmq.remoting.protocol.route.BrokerData;
 import org.assertj.core.util.Maps;
 import org.junit.Before;
 import org.junit.Test;
@@ -68,7 +70,7 @@ public class RequestProcessorTest {
 
     private RouteInfoManager routeInfoManager;
 
-    private InternalLogger logger;
+    private Logger logger;
 
     @Before
     public void init() throws Exception {
@@ -86,10 +88,9 @@ public class RequestProcessorTest {
 
         clientRequestProcessor = new ClientRequestProcessor(namesrvController);
 
-
         registerRouteInfoManager();
 
-        logger = mock(InternalLogger.class);
+        logger = mock(Logger.class);
         setFinalStatic(DefaultRequestProcessor.class.getDeclaredField("log"), logger);
     }
 
@@ -177,6 +178,54 @@ public class RequestProcessorTest {
 
         assertThat(response).isNotNull();
         assertThat(response.getCode()).isEqualTo(ResponseCode.REQUEST_CODE_NOT_SUPPORTED);
+    }
+
+    @Test
+    public void testProcessRequest_UpdateConfigPath() throws RemotingCommandException {
+        final RemotingCommand updateConfigRequest = RemotingCommand.createRequestCommand(RequestCode.UPDATE_NAMESRV_CONFIG, null);
+        Properties properties = new Properties();
+
+        // Update allowed value
+        properties.setProperty("enableTopicList", "true");
+        updateConfigRequest.setBody(MixAll.properties2String(properties).getBytes(StandardCharsets.UTF_8));
+
+        RemotingCommand response = defaultRequestProcessor.processRequest(null, updateConfigRequest);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getCode()).isEqualTo(ResponseCode.SUCCESS);
+
+        //update disallowed value
+        properties.clear();
+        properties.setProperty("configStorePath", "test/path");
+        updateConfigRequest.setBody(MixAll.properties2String(properties).getBytes(StandardCharsets.UTF_8));
+
+        response = defaultRequestProcessor.processRequest(null, updateConfigRequest);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getCode()).isEqualTo(ResponseCode.NO_PERMISSION);
+        assertThat(response.getRemark()).contains("Can not update config in black list.");
+
+        //update disallowed values
+        properties.clear();
+        properties.setProperty("kvConfigPath", "test/path");
+        updateConfigRequest.setBody(MixAll.properties2String(properties).getBytes(StandardCharsets.UTF_8));
+
+        response = defaultRequestProcessor.processRequest(null, updateConfigRequest);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getCode()).isEqualTo(ResponseCode.NO_PERMISSION);
+        assertThat(response.getRemark()).contains("Can not update config in black list");
+
+        //update disallowed values
+        properties.clear();
+        properties.setProperty("configBlackList", "test;path");
+        updateConfigRequest.setBody(MixAll.properties2String(properties).getBytes(StandardCharsets.UTF_8));
+
+        response = defaultRequestProcessor.processRequest(null, updateConfigRequest);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getCode()).isEqualTo(ResponseCode.NO_PERMISSION);
+        assertThat(response.getRemark()).contains("Can not update config in black list");
     }
 
     @Test
@@ -395,6 +444,42 @@ public class RequestProcessorTest {
         ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
         when(ctx.channel()).thenReturn(null);
         RemotingCommand request = getRemotingCommand(RequestCode.GET_BROKER_CLUSTER_INFO);
+        RemotingCommand remotingCommand = defaultRequestProcessor.processRequest(ctx, request);
+        assertThat(remotingCommand.getCode()).isEqualTo(ResponseCode.SUCCESS);
+    }
+
+    @Test
+    public void testQueryDataVersion()throws RemotingCommandException {
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(null);
+        RemotingCommand request = getRemotingCommand(RequestCode.QUERY_DATA_VERSION);
+        RemotingCommand remotingCommand = defaultRequestProcessor.processRequest(ctx, request);
+        assertThat(remotingCommand.getCode()).isEqualTo(ResponseCode.SUCCESS);
+    }
+
+    @Test
+    public void testGetBrokerMemberBroker() throws RemotingCommandException {
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(null);
+        RemotingCommand request = getRemotingCommand(RequestCode.GET_BROKER_MEMBER_GROUP);
+        RemotingCommand remotingCommand = defaultRequestProcessor.processRequest(ctx, request);
+        assertThat(remotingCommand.getCode()).isEqualTo(ResponseCode.SUCCESS);
+    }
+
+    @Test
+    public void testBrokerHeartBeat() throws RemotingCommandException {
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(null);
+        RemotingCommand request = getRemotingCommand(RequestCode.BROKER_HEARTBEAT);
+        RemotingCommand remotingCommand = defaultRequestProcessor.processRequest(ctx, request);
+        assertThat(remotingCommand.getCode()).isEqualTo(ResponseCode.SUCCESS);
+    }
+
+    @Test
+    public void testAddWritePermOfBroker() throws RemotingCommandException {
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(null);
+        RemotingCommand request = getRemotingCommand(RequestCode.ADD_WRITE_PERM_OF_BROKER);
         RemotingCommand remotingCommand = defaultRequestProcessor.processRequest(ctx, request);
         assertThat(remotingCommand.getCode()).isEqualTo(ResponseCode.SUCCESS);
     }

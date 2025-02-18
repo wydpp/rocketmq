@@ -20,16 +20,16 @@ package org.apache.rocketmq.test.offset;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-
-import org.apache.log4j.Logger;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.client.exception.MQClientException;
-import org.apache.rocketmq.common.admin.ConsumeStats;
-import org.apache.rocketmq.common.admin.OffsetWrapper;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.RequestCode;
-import org.apache.rocketmq.common.protocol.header.ResetOffsetRequestHeader;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.RequestCode;
+import org.apache.rocketmq.remoting.protocol.admin.ConsumeStats;
+import org.apache.rocketmq.remoting.protocol.admin.OffsetWrapper;
+import org.apache.rocketmq.remoting.protocol.header.ResetOffsetRequestHeader;
+import org.apache.rocketmq.logging.org.slf4j.Logger;
+import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.test.base.BaseConf;
 import org.apache.rocketmq.test.client.rmq.RMQNormalConsumer;
 import org.apache.rocketmq.test.client.rmq.RMQNormalProducer;
@@ -48,7 +48,7 @@ import static org.awaitility.Awaitility.await;
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class OffsetResetIT extends BaseConf {
 
-    private static final Logger LOGGER = Logger.getLogger(OffsetResetIT.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(OffsetResetIT.class);
 
     private RMQNormalListener listener = null;
     private RMQNormalProducer producer = null;
@@ -170,5 +170,27 @@ public class OffsetResetIT extends BaseConf {
             long expect = hasConsumeBefore + expectAfterReset;
             return receive >= expect;
         });
+    }
+
+    @Test
+    public void testPullOffsetTotal() throws Exception {
+        int msgSize = 100;
+        List<MessageQueue> mqs = producer.getMessageQueue();
+        MessageQueueMsg messageQueueMsg = new MessageQueueMsg(mqs, msgSize);
+
+        producer.send(messageQueueMsg.getMsgsWithMQ());
+        consumer.getListener().waitForMessageConsume(producer.getAllMsgBody(), CONSUME_TIME);
+
+        await().pollInterval(Duration.ofSeconds(1)).atMost(Duration.ofMinutes(3)).until(
+            () -> 0L == this.getConsumerLag(topic, consumer.getConsumerGroup()));
+
+        long expectInflight = 0L;
+        for (BrokerController controller : brokerControllerList) {
+            ConsumeStats consumeStats = defaultMQAdminExt.getDefaultMQAdminExtImpl().getMqClientInstance()
+                .getMQClientAPIImpl().getConsumeStats(controller.getBrokerAddr(),
+                    consumer.getConsumerGroup(), consumer.getTopic(), 3 * 1000);
+            expectInflight += consumeStats.computeInflightTotalDiff();
+        }
+        Assert.assertEquals(0L, expectInflight);
     }
 }

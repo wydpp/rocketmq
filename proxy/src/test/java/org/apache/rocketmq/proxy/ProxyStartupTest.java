@@ -19,7 +19,7 @@ package org.apache.rocketmq.proxy;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
-
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -28,11 +28,11 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.UUID;
 import java.util.Iterator;
+import java.util.UUID;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.broker.BrokerStartup;
-import org.apache.rocketmq.client.log.ClientLogger;
+import org.apache.rocketmq.broker.metrics.BrokerMetricsManager;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.proxy.config.Configuration;
 import org.apache.rocketmq.proxy.config.ConfigurationManager;
@@ -44,6 +44,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
@@ -134,7 +135,6 @@ public class ProxyStartupTest {
         System.clearProperty(RMQ_PROXY_HOME);
         System.clearProperty(MixAll.NAMESRV_ADDR_PROPERTY);
         System.clearProperty(Configuration.CONFIG_PATH_PROPERTY);
-        System.clearProperty(ClientLogger.CLIENT_LOG_USESLF4J);
         recursiveDelete(proxyHome);
     }
 
@@ -160,7 +160,7 @@ public class ProxyStartupTest {
         assertEquals(proxyMode, commandLineArgument.getProxyMode());
         assertEquals(namesrvAddr, commandLineArgument.getNamesrvAddr());
 
-        ProxyStartup.initLogAndConfiguration(commandLineArgument);
+        ProxyStartup.initConfiguration(commandLineArgument);
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         assertEquals(brokerConfigPath, config.getBrokerConfigPath());
@@ -175,7 +175,7 @@ public class ProxyStartupTest {
         CommandLineArgument commandLineArgument = ProxyStartup.parseCommandLineArgument(new String[] {
             "-pm", "local"
         });
-        ProxyStartup.initLogAndConfiguration(commandLineArgument);
+        ProxyStartup.initConfiguration(commandLineArgument);
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         assertEquals(namesrvAddr, config.getNamesrvAddr());
@@ -187,8 +187,12 @@ public class ProxyStartupTest {
         try (MockedStatic<BrokerStartup> brokerStartupMocked = mockStatic(BrokerStartup.class);
              MockedStatic<DefaultMessagingProcessor> messagingProcessorMocked = mockStatic(DefaultMessagingProcessor.class)) {
             ArgumentCaptor<Object> args = ArgumentCaptor.forClass(Object.class);
+            BrokerController brokerControllerMocked = mock(BrokerController.class);
+            BrokerMetricsManager brokerMetricsManagerMocked = mock(BrokerMetricsManager.class);
+            Mockito.when(brokerMetricsManagerMocked.getBrokerMeter()).thenReturn(OpenTelemetrySdk.builder().build().getMeter("test"));
+            Mockito.when(brokerControllerMocked.getBrokerMetricsManager()).thenReturn(brokerMetricsManagerMocked);
             brokerStartupMocked.when(() -> BrokerStartup.createBrokerController((String[]) args.capture()))
-                .thenReturn(mock(BrokerController.class));
+                .thenReturn(brokerControllerMocked);
             messagingProcessorMocked.when(() -> DefaultMessagingProcessor.createForLocalMode(any(), any()))
                 .thenReturn(mock(DefaultMessagingProcessor.class));
 
@@ -216,7 +220,7 @@ public class ProxyStartupTest {
             "-pm", "local",
             "-pc", configFilePath.toAbsolutePath().toString()
         });
-        ProxyStartup.initLogAndConfiguration(commandLineArgument);
+        ProxyStartup.initConfiguration(commandLineArgument);
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         assertEquals(namesrvAddr, config.getNamesrvAddr());
@@ -239,7 +243,7 @@ public class ProxyStartupTest {
             "-pc", configFilePath.toAbsolutePath().toString(),
             "-n", namesrvAddr
         });
-        ProxyStartup.initLogAndConfiguration(commandLineArgument);
+        ProxyStartup.initConfiguration(commandLineArgument);
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         assertEquals(namesrvAddr, config.getNamesrvAddr());
@@ -264,7 +268,7 @@ public class ProxyStartupTest {
             "-n", namesrvAddr,
             "-bc", brokerConfigFilePath.toAbsolutePath().toString()
         });
-        ProxyStartup.initLogAndConfiguration(commandLineArgument);
+        ProxyStartup.initConfiguration(commandLineArgument);
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         assertEquals(namesrvAddr, config.getNamesrvAddr());
@@ -278,7 +282,7 @@ public class ProxyStartupTest {
         CommandLineArgument commandLineArgument = ProxyStartup.parseCommandLineArgument(new String[] {
             "-pm", "cluster"
         });
-        ProxyStartup.initLogAndConfiguration(commandLineArgument);
+        ProxyStartup.initConfiguration(commandLineArgument);
 
         try (MockedStatic<DefaultMessagingProcessor> messagingProcessorMocked = mockStatic(DefaultMessagingProcessor.class)) {
             DefaultMessagingProcessor processor = mock(DefaultMessagingProcessor.class);

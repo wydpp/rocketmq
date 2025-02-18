@@ -20,22 +20,22 @@ package org.apache.rocketmq.store.plugin;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.LinkedList;
-import java.util.Optional;
-import java.util.Set;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
+import org.apache.rocketmq.common.Pair;
 import org.apache.rocketmq.common.SystemClock;
-import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageExtBatch;
-import org.apache.rocketmq.common.protocol.body.HARuntimeInfo;
+import org.apache.rocketmq.common.message.MessageExtBrokerInner;
+import org.apache.rocketmq.remoting.protocol.body.HARuntimeInfo;
 import org.apache.rocketmq.store.AllocateMappedFileService;
 import org.apache.rocketmq.store.AppendMessageResult;
 import org.apache.rocketmq.store.CommitLog;
 import org.apache.rocketmq.store.CommitLogDispatcher;
 import org.apache.rocketmq.store.DispatchRequest;
 import org.apache.rocketmq.store.GetMessageResult;
-import org.apache.rocketmq.common.message.MessageExtBrokerInner;
 import org.apache.rocketmq.store.MessageFilter;
 import org.apache.rocketmq.store.MessageStore;
 import org.apache.rocketmq.store.PutMessageResult;
@@ -51,10 +51,16 @@ import org.apache.rocketmq.store.hook.PutMessageHook;
 import org.apache.rocketmq.store.hook.SendMessageBackHook;
 import org.apache.rocketmq.store.logfile.MappedFile;
 import org.apache.rocketmq.store.queue.ConsumeQueueInterface;
-import org.apache.rocketmq.store.queue.ConsumeQueueStore;
+import org.apache.rocketmq.store.queue.ConsumeQueueStoreInterface;
 import org.apache.rocketmq.store.stats.BrokerStatsManager;
 import org.apache.rocketmq.store.timer.TimerMessageStore;
 import org.apache.rocketmq.store.util.PerfCounter;
+import org.rocksdb.RocksDBException;
+
+import io.opentelemetry.api.common.AttributesBuilder;
+import io.opentelemetry.api.metrics.Meter;
+import io.opentelemetry.sdk.metrics.InstrumentSelector;
+import io.opentelemetry.sdk.metrics.ViewBuilder;
 
 public abstract class AbstractPluginMessageStore implements MessageStore {
     protected MessageStore next = null;
@@ -127,6 +133,12 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
+    public CompletableFuture<GetMessageResult> getMessageAsync(String group, String topic,
+        int queueId, long offset, int maxMsgNums, MessageFilter messageFilter) {
+        return next.getMessageAsync(group, topic, queueId, offset, maxMsgNums, messageFilter);
+    }
+
+    @Override
     public long getMaxOffsetInQueue(String topic, int queueId) {
         return next.getMaxOffsetInQueue(topic, queueId);
     }
@@ -192,8 +204,19 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
+    public CompletableFuture<Long> getEarliestMessageTimeAsync(String topic, int queueId) {
+        return next.getEarliestMessageTimeAsync(topic, queueId);
+    }
+
+    @Override
     public long getMessageStoreTimeStamp(String topic, int queueId, long consumeQueueOffset) {
         return next.getMessageStoreTimeStamp(topic, queueId, consumeQueueOffset);
+    }
+
+    @Override
+    public CompletableFuture<Long> getMessageStoreTimeStampAsync(String topic, int queueId,
+        long consumeQueueOffset) {
+        return next.getMessageStoreTimeStampAsync(topic, queueId, consumeQueueOffset);
     }
 
     @Override
@@ -223,13 +246,24 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
+    public CompletableFuture<QueryMessageResult> queryMessageAsync(String topic, String key,
+        int maxNum, long begin, long end) {
+        return next.queryMessageAsync(topic, key, maxNum, begin, end);
+    }
+
+    @Override
     public long now() {
         return next.now();
     }
 
     @Override
-    public int cleanUnusedTopic(Set<String> topics) {
-        return next.cleanUnusedTopic(topics);
+    public int deleteTopics(final Set<String> deleteTopics) {
+        return next.deleteTopics(deleteTopics);
+    }
+
+    @Override
+    public int cleanUnusedTopic(final Set<String> retainTopics) {
+        return next.cleanUnusedTopic(retainTopics);
     }
 
     @Override
@@ -238,8 +272,19 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
+    @Deprecated
     public boolean checkInDiskByConsumeOffset(String topic, int queueId, long consumeOffset) {
         return next.checkInDiskByConsumeOffset(topic, queueId, consumeOffset);
+    }
+
+    @Override
+    public boolean checkInMemByConsumeOffset(String topic, int queueId, long consumeOffset, int batchSize) {
+        return next.checkInMemByConsumeOffset(topic, queueId, consumeOffset, batchSize);
+    }
+
+    @Override
+    public boolean checkInStoreByConsumeOffset(String topic, int queueId, long consumeOffset) {
+        return next.checkInStoreByConsumeOffset(topic, queueId, consumeOffset);
     }
 
     @Override
@@ -270,6 +315,11 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     @Override
     public LinkedList<CommitLogDispatcher> getDispatcherList() {
         return next.getDispatcherList();
+    }
+
+    @Override
+    public void addDispatcher(CommitLogDispatcher dispatcher) {
+        next.addDispatcher(dispatcher);
     }
 
     @Override
@@ -409,7 +459,7 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
-    public boolean truncateFiles(long offsetToTruncate) {
+    public boolean truncateFiles(long offsetToTruncate) throws RocksDBException {
         return next.truncateFiles(offsetToTruncate);
     }
 
@@ -440,6 +490,13 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
+    public CompletableFuture<GetMessageResult> getMessageAsync(String group, String topic,
+        int queueId, long offset, int maxMsgNums, int maxTotalMsgSize,
+        MessageFilter messageFilter) {
+        return next.getMessageAsync(group, topic, queueId, offset, maxMsgNums, maxTotalMsgSize, messageFilter);
+    }
+
+    @Override
     public MessageExt lookMessageByOffset(long commitLogOffset, int size) {
         return next.lookMessageByOffset(commitLogOffset, size);
     }
@@ -456,7 +513,7 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
 
     @Override
     public void onCommitLogDispatch(DispatchRequest dispatchRequest, boolean doDispatch, MappedFile commitLogFile,
-        boolean isRecover, boolean isFileEnd) {
+        boolean isRecover, boolean isFileEnd) throws RocksDBException {
         next.onCommitLogDispatch(dispatchRequest, doDispatch, commitLogFile, isRecover, isFileEnd);
     }
 
@@ -496,13 +553,8 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
-    public void truncateDirtyLogicFiles(long phyOffset) {
+    public void truncateDirtyLogicFiles(long phyOffset) throws RocksDBException {
         next.truncateDirtyLogicFiles(phyOffset);
-    }
-
-    @Override
-    public void destroyLogics() {
-        next.destroyLogics();
     }
 
     @Override
@@ -516,7 +568,7 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
-    public ConsumeQueueStore getQueueStore() {
+    public ConsumeQueueStoreInterface getQueueStore() {
         return next.getQueueStore();
     }
 
@@ -531,13 +583,13 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     }
 
     @Override
-    public void assignOffset(MessageExtBrokerInner msg, short messageNum) {
-        next.assignOffset(msg, messageNum);
+    public void assignOffset(MessageExtBrokerInner msg) throws RocksDBException {
+        next.assignOffset(msg);
     }
 
     @Override
-    public Optional<TopicConfig> getTopicConfig(String topic) {
-        return next.getTopicConfig(topic);
+    public void increaseOffset(MessageExtBrokerInner msg, short messageNum) {
+        next.increaseOffset(msg, messageNum);
     }
 
     @Override
@@ -578,5 +630,39 @@ public abstract class AbstractPluginMessageStore implements MessageStore {
     @Override
     public boolean isShutdown() {
         return next.isShutdown();
+    }
+
+    @Override
+    public long estimateMessageCount(String topic, int queueId, long from, long to, MessageFilter filter) {
+        return next.estimateMessageCount(topic, queueId, from, to, filter);
+    }
+
+    @Override
+    public List<Pair<InstrumentSelector, ViewBuilder>> getMetricsView() {
+        return next.getMetricsView();
+    }
+
+    @Override
+    public void initMetrics(Meter meter, Supplier<AttributesBuilder> attributesBuilderSupplier) {
+        next.initMetrics(meter, attributesBuilderSupplier);
+    }
+
+    @Override
+    public void finishCommitLogDispatch() {
+        next.finishCommitLogDispatch();
+    }
+
+    @Override
+    public void recoverTopicQueueTable() {
+        next.recoverTopicQueueTable();
+    }
+
+    @Override
+    public void notifyMessageArriveIfNecessary(DispatchRequest dispatchRequest) {
+        next.notifyMessageArriveIfNecessary(dispatchRequest);
+    }
+
+    public MessageStore getNext() {
+        return next;
     }
 }

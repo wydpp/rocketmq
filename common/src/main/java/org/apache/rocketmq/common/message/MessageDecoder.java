@@ -16,6 +16,7 @@
  */
 package org.apache.rocketmq.common.message;
 
+import io.netty.buffer.ByteBuf;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -42,7 +43,13 @@ public class MessageDecoder {
     public final static int MESSAGE_FLAG_POSITION = 16;
     public final static int MESSAGE_PHYSIC_OFFSET_POSITION = 28;
     public final static int MESSAGE_STORE_TIMESTAMP_POSITION = 56;
+
+    // Set message magic code v2 if topic length > 127
     public final static int MESSAGE_MAGIC_CODE = -626843481;
+    public final static int MESSAGE_MAGIC_CODE_V2 = -626843477;
+
+    // End of file empty MAGIC CODE cbd43194
+    public final static int BLANK_MAGIC_CODE = -875286124;
     public static final char NAME_VALUE_SEPARATOR = 1;
     public static final char PROPERTY_SEPARATOR = 2;
     public static final int PHY_POS_POSITION = 4 + 4 + 4 + 4 + 4 + 8;
@@ -108,6 +115,9 @@ public class MessageDecoder {
      */
     public static Map<String, String> decodeProperties(ByteBuffer byteBuffer) {
         int sysFlag = byteBuffer.getInt(SYSFLAG_POSITION);
+        int magicCode = byteBuffer.getInt(MESSAGE_MAGIC_CODE_POSITION);
+        MessageVersion version = MessageVersion.valueOfMagicCode(magicCode);
+
         int bornhostLength = (sysFlag & MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 8 : 20;
         int storehostAddressLength = (sysFlag & MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 8 : 20;
         int bodySizePosition = 4 // 1 TOTALSIZE
@@ -124,22 +134,51 @@ public class MessageDecoder {
             + storehostAddressLength // 12 STOREHOSTADDRESS
             + 4 // 13 RECONSUMETIMES
             + 8; // 14 Prepared Transaction Offset
+
         int topicLengthPosition = bodySizePosition + 4 + byteBuffer.getInt(bodySizePosition);
+        byteBuffer.position(topicLengthPosition);
+        int topicLengthSize = version.getTopicLengthSize();
+        int topicLength = version.getTopicLength(byteBuffer);
 
-        byte topicLength = byteBuffer.get(topicLengthPosition);
-
-        short propertiesLength = byteBuffer.getShort(topicLengthPosition + 1 + topicLength);
-
-        byteBuffer.position(topicLengthPosition + 1 + topicLength + 2);
+        int propertiesPosition = topicLengthPosition + topicLengthSize + topicLength;
+        short propertiesLength = byteBuffer.getShort(propertiesPosition);
+        byteBuffer.position(propertiesPosition + 2);
 
         if (propertiesLength > 0) {
             byte[] properties = new byte[propertiesLength];
             byteBuffer.get(properties);
             String propertiesString = new String(properties, CHARSET_UTF8);
-            Map<String, String> map = string2messageProperties(propertiesString);
-            return map;
+            return string2messageProperties(propertiesString);
         }
         return null;
+    }
+
+    public static void createCrc32(final ByteBuffer input, int crc32) {
+        input.put(MessageConst.PROPERTY_CRC32.getBytes(StandardCharsets.UTF_8));
+        input.put((byte) NAME_VALUE_SEPARATOR);
+        for (int i = 0; i < 10; i++) {
+            byte b = '0';
+            if (crc32 > 0) {
+                b += (byte) (crc32 % 10);
+                crc32 /= 10;
+            }
+            input.put(b);
+        }
+        input.put((byte) PROPERTY_SEPARATOR);
+    }
+
+    public static void createCrc32(final ByteBuf input, int crc32) {
+        input.writeBytes(MessageConst.PROPERTY_CRC32.getBytes(StandardCharsets.UTF_8));
+        input.writeByte((byte) NAME_VALUE_SEPARATOR);
+        for (int i = 0; i < 10; i++) {
+            byte b = '0';
+            if (crc32 > 0) {
+                b += (byte) (crc32 % 10);
+                crc32 /= 10;
+            }
+            input.writeByte(b);
+        }
+        input.writeByte((byte) PROPERTY_SEPARATOR);
     }
 
     public static MessageExt decode(ByteBuffer byteBuffer) {
@@ -275,7 +314,7 @@ public class MessageDecoder {
     /**
      * Encode without store timestamp and store host, skip blank msg.
      *
-     * @param messageExt msg
+     * @param messageExt   msg
      * @param needCompress need compress or not
      * @return byte array
      * @throws IOException when compress failed
@@ -423,9 +462,7 @@ public class MessageDecoder {
 
             // 2 MAGICCODE
             int magicCode = byteBuffer.getInt();
-            if (magicCode != MESSAGE_MAGIC_CODE) {
-                throw new RuntimeException("Unknown magicCode: " + magicCode);
-            }
+            MessageVersion version = MessageVersion.valueOfMagicCode(magicCode);
 
             // 3 BODYCRC
             int bodyCRC = byteBuffer.getInt();
@@ -509,8 +546,8 @@ public class MessageDecoder {
             }
 
             // 16 TOPIC
-            byte topicLen = byteBuffer.get();
-            byte[] topic = new byte[(int) topicLen];
+            int topicLen = version.getTopicLength(byteBuffer);
+            byte[] topic = new byte[topicLen];
             byteBuffer.get(topic);
             msgExt.setTopic(new String(topic, CHARSET_UTF8));
 
@@ -610,14 +647,11 @@ public class MessageDecoder {
             sb.append(value);
             sb.append(PROPERTY_SEPARATOR);
         }
-        if (sb.length() > 0) {
-            sb.deleteCharAt(sb.length() - 1);
-        }
         return sb.toString();
     }
 
     public static Map<String, String> string2messageProperties(final String properties) {
-        Map<String, String> map = new HashMap<>();
+        Map<String, String> map = new HashMap<>(128);
         if (properties != null) {
             int len = properties.length();
             int index = 0;
@@ -649,7 +683,6 @@ public class MessageDecoder {
         byte[] propertiesBytes = properties.getBytes(CHARSET_UTF8);
         //note properties length must not more than Short.MAX
         short propertiesLength = (short) propertiesBytes.length;
-        int sysFlag = message.getFlag();
         int storeSize = 4 // 1 TOTALSIZE
             + 4 // 2 MAGICCOD
             + 4 // 3 BODYCRC

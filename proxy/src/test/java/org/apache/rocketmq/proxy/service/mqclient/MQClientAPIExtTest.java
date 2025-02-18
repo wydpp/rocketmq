@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -39,33 +40,35 @@ import org.apache.rocketmq.client.consumer.PullStatus;
 import org.apache.rocketmq.client.impl.CommunicationMode;
 import org.apache.rocketmq.client.impl.MQClientAPIImpl;
 import org.apache.rocketmq.client.impl.consumer.PullResultExt;
+import org.apache.rocketmq.client.impl.mqclient.DoNothingClientRemotingProcessor;
+import org.apache.rocketmq.client.impl.mqclient.MQClientAPIExt;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.client.producer.SendStatus;
 import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.header.AckMessageRequestHeader;
-import org.apache.rocketmq.common.protocol.header.ChangeInvisibleTimeRequestHeader;
-import org.apache.rocketmq.common.protocol.header.ConsumerSendMsgBackRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupResponseBody;
-import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupResponseHeader;
-import org.apache.rocketmq.common.protocol.header.GetMaxOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.GetMaxOffsetResponseHeader;
-import org.apache.rocketmq.common.protocol.header.PopMessageRequestHeader;
-import org.apache.rocketmq.common.protocol.header.PullMessageRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SearchOffsetRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SearchOffsetResponseHeader;
-import org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader;
-import org.apache.rocketmq.common.protocol.header.SendMessageResponseHeader;
-import org.apache.rocketmq.common.protocol.heartbeat.HeartbeatData;
+import org.apache.rocketmq.common.utils.NetworkUtil;
 import org.apache.rocketmq.remoting.InvokeCallback;
 import org.apache.rocketmq.remoting.RemotingClient;
-import org.apache.rocketmq.remoting.common.RemotingUtil;
 import org.apache.rocketmq.remoting.netty.NettyClientConfig;
 import org.apache.rocketmq.remoting.netty.ResponseFuture;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.header.AckMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.ChangeInvisibleTimeRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.ConsumerSendMsgBackRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.GetConsumerListByGroupRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.GetConsumerListByGroupResponseBody;
+import org.apache.rocketmq.remoting.protocol.header.GetConsumerListByGroupResponseHeader;
+import org.apache.rocketmq.remoting.protocol.header.GetMaxOffsetRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.GetMaxOffsetResponseHeader;
+import org.apache.rocketmq.remoting.protocol.header.PopMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.PullMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.SearchOffsetRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.SearchOffsetResponseHeader;
+import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.header.SendMessageResponseHeader;
+import org.apache.rocketmq.remoting.protocol.heartbeat.HeartbeatData;
 import org.assertj.core.util.Lists;
 import org.junit.Before;
 import org.junit.Test;
@@ -83,6 +86,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 
 @RunWith(MockitoJUnitRunner.class)
 public class MQClientAPIExtTest {
@@ -107,13 +111,9 @@ public class MQClientAPIExtTest {
 
     @Test
     public void testSendHeartbeatAsync() throws Exception {
-        doAnswer((Answer<Void>) mock -> {
-            InvokeCallback invokeCallback = mock.getArgument(3);
-            ResponseFuture responseFuture = new ResponseFuture(null, 0, 3000, invokeCallback, null);
-            responseFuture.putResponse(RemotingCommand.createResponseCommand(ResponseCode.SUCCESS, ""));
-            invokeCallback.operationComplete(responseFuture);
-            return null;
-        }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
+        CompletableFuture<RemotingCommand> future = new CompletableFuture<>();
+        future.complete(RemotingCommand.createResponseCommand(ResponseCode.SUCCESS, ""));
+        doReturn(future).when(remotingClient).invoke(anyString(), any(RemotingCommand.class), anyLong());
 
         assertNotNull(mqClientAPI.sendHeartbeatAsync(BROKER_ADDR, new HeartbeatData(), TIMEOUT).get());
     }
@@ -121,20 +121,16 @@ public class MQClientAPIExtTest {
     @Test
     public void testSendMessageAsync() throws Exception {
         AtomicReference<String> msgIdRef = new AtomicReference<>();
-        doAnswer((Answer<Void>) mock -> {
-            InvokeCallback invokeCallback = mock.getArgument(3);
-            ResponseFuture responseFuture = new ResponseFuture(null, 0, 3000, invokeCallback, null);
-            RemotingCommand response = RemotingCommand.createResponseCommand(SendMessageResponseHeader.class);
-            SendMessageResponseHeader sendMessageResponseHeader = (SendMessageResponseHeader) response.readCustomHeader();
-            sendMessageResponseHeader.setMsgId(msgIdRef.get());
-            sendMessageResponseHeader.setQueueId(0);
-            sendMessageResponseHeader.setQueueOffset(1L);
-            response.setCode(ResponseCode.SUCCESS);
-            response.makeCustomHeaderToNet();
-            responseFuture.putResponse(response);
-            invokeCallback.operationComplete(responseFuture);
-            return null;
-        }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
+        CompletableFuture<RemotingCommand> future = new CompletableFuture<>();
+        RemotingCommand response = RemotingCommand.createResponseCommand(SendMessageResponseHeader.class);
+        SendMessageResponseHeader sendMessageResponseHeader = (SendMessageResponseHeader) response.readCustomHeader();
+        sendMessageResponseHeader.setMsgId(msgIdRef.get());
+        sendMessageResponseHeader.setQueueId(0);
+        sendMessageResponseHeader.setQueueOffset(1L);
+        response.setCode(ResponseCode.SUCCESS);
+        response.makeCustomHeaderToNet();
+        future.complete(response);
+        doReturn(future).when(remotingClient).invoke(anyString(), any(RemotingCommand.class), anyLong());
 
         MessageExt messageExt = createMessage();
         msgIdRef.set(MessageClientIDSetter.getUniqID(messageExt));
@@ -148,20 +144,16 @@ public class MQClientAPIExtTest {
 
     @Test
     public void testSendMessageListAsync() throws Exception {
-        doAnswer((Answer<Void>) mock -> {
-            InvokeCallback invokeCallback = mock.getArgument(3);
-            ResponseFuture responseFuture = new ResponseFuture(null, 0, 3000, invokeCallback, null);
-            RemotingCommand response = RemotingCommand.createResponseCommand(SendMessageResponseHeader.class);
-            SendMessageResponseHeader sendMessageResponseHeader = (SendMessageResponseHeader) response.readCustomHeader();
-            sendMessageResponseHeader.setMsgId("");
-            sendMessageResponseHeader.setQueueId(0);
-            sendMessageResponseHeader.setQueueOffset(1L);
-            response.setCode(ResponseCode.SUCCESS);
-            response.makeCustomHeaderToNet();
-            responseFuture.putResponse(response);
-            invokeCallback.operationComplete(responseFuture);
-            return null;
-        }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
+        CompletableFuture<RemotingCommand> future = new CompletableFuture<>();
+        RemotingCommand response = RemotingCommand.createResponseCommand(SendMessageResponseHeader.class);
+        SendMessageResponseHeader sendMessageResponseHeader = (SendMessageResponseHeader) response.readCustomHeader();
+        sendMessageResponseHeader.setMsgId("");
+        sendMessageResponseHeader.setQueueId(0);
+        sendMessageResponseHeader.setQueueOffset(1L);
+        response.setCode(ResponseCode.SUCCESS);
+        response.makeCustomHeaderToNet();
+        future.complete(response);
+        doReturn(future).when(remotingClient).invoke(anyString(), any(RemotingCommand.class), anyLong());
 
         List<MessageExt> messageExtList = new ArrayList<>();
         StringBuilder sb = new StringBuilder();
@@ -180,13 +172,9 @@ public class MQClientAPIExtTest {
 
     @Test
     public void testSendMessageBackAsync() throws Exception {
-        doAnswer((Answer<Void>) mock -> {
-            InvokeCallback invokeCallback = mock.getArgument(3);
-            ResponseFuture responseFuture = new ResponseFuture(null, 0, 3000, invokeCallback, null);
-            responseFuture.putResponse(RemotingCommand.createResponseCommand(ResponseCode.SUCCESS, ""));
-            invokeCallback.operationComplete(responseFuture);
-            return null;
-        }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
+        CompletableFuture<RemotingCommand> future = new CompletableFuture<>();
+        future.complete(RemotingCommand.createResponseCommand(ResponseCode.SUCCESS, ""));
+        doReturn(future).when(remotingClient).invoke(anyString(), any(RemotingCommand.class), anyLong());
 
         RemotingCommand remotingCommand = mqClientAPI.sendMessageBackAsync(BROKER_ADDR, new ConsumerSendMsgBackRequestHeader(), TIMEOUT)
             .get();
@@ -216,6 +204,18 @@ public class MQClientAPIExtTest {
         }).when(mqClientAPI).ackMessageAsync(anyString(), anyLong(), any(AckCallback.class), any());
 
         assertSame(ackResult, mqClientAPI.ackMessageAsync(BROKER_ADDR, new AckMessageRequestHeader(), TIMEOUT).get());
+    }
+
+    @Test
+    public void testBatchAckMessageAsync() throws Exception {
+        AckResult ackResult = new AckResult();
+        doAnswer((Answer<Void>) mock -> {
+            AckCallback ackCallback = mock.getArgument(2);
+            ackCallback.onSuccess(ackResult);
+            return null;
+        }).when(mqClientAPI).batchAckMessageAsync(anyString(), anyLong(), any(AckCallback.class), any());
+
+        assertSame(ackResult, mqClientAPI.batchAckMessageAsync(BROKER_ADDR, TOPIC, CONSUMER_GROUP, new ArrayList<>(), TIMEOUT).get());
     }
 
     @Test
@@ -271,7 +271,7 @@ public class MQClientAPIExtTest {
             body.setConsumerIdList(clientIds);
             response.setBody(body.encode());
             responseFuture.putResponse(response);
-            invokeCallback.operationComplete(responseFuture);
+            invokeCallback.operationSucceed(responseFuture.getResponseCommand());
             return null;
         }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
 
@@ -288,7 +288,7 @@ public class MQClientAPIExtTest {
             response.setCode(ResponseCode.SYSTEM_ERROR);
             response.makeCustomHeaderToNet();
             responseFuture.putResponse(response);
-            invokeCallback.operationComplete(responseFuture);
+            invokeCallback.operationSucceed(responseFuture.getResponseCommand());
             return null;
         }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
 
@@ -308,7 +308,7 @@ public class MQClientAPIExtTest {
             response.setCode(ResponseCode.SUCCESS);
             response.makeCustomHeaderToNet();
             responseFuture.putResponse(response);
-            invokeCallback.operationComplete(responseFuture);
+            invokeCallback.operationSucceed(responseFuture.getResponseCommand());
             return null;
         }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
 
@@ -321,18 +321,15 @@ public class MQClientAPIExtTest {
     @Test
     public void testSearchOffsetAsync() throws Exception {
         long offset = ThreadLocalRandom.current().nextLong();
-        doAnswer((Answer<Void>) mock -> {
-            InvokeCallback invokeCallback = mock.getArgument(3);
-            ResponseFuture responseFuture = new ResponseFuture(null, 0, 3000, invokeCallback, null);
-            RemotingCommand response = RemotingCommand.createResponseCommand(SearchOffsetResponseHeader.class);
-            SearchOffsetResponseHeader responseHeader = (SearchOffsetResponseHeader) response.readCustomHeader();
-            responseHeader.setOffset(offset);
-            response.setCode(ResponseCode.SUCCESS);
-            response.makeCustomHeaderToNet();
-            responseFuture.putResponse(response);
-            invokeCallback.operationComplete(responseFuture);
-            return null;
-        }).when(remotingClient).invokeAsync(anyString(), any(RemotingCommand.class), anyLong(), any());
+        CompletableFuture<RemotingCommand> future = new CompletableFuture<>();
+        RemotingCommand response = RemotingCommand.createResponseCommand(SearchOffsetResponseHeader.class);
+        SearchOffsetResponseHeader responseHeader = (SearchOffsetResponseHeader) response.readCustomHeader();
+        responseHeader.setOffset(offset);
+        response.setCode(ResponseCode.SUCCESS);
+        response.makeCustomHeaderToNet();
+        future.complete(response);
+
+        doReturn(future).when(remotingClient).invoke(anyString(), any(RemotingCommand.class), anyLong());
 
         SearchOffsetRequestHeader requestHeader = new SearchOffsetRequestHeader();
         requestHeader.setTopic(TOPIC);
@@ -344,8 +341,8 @@ public class MQClientAPIExtTest {
     protected MessageExt createMessage() {
         MessageExt messageExt = new MessageExt();
         messageExt.setTopic("topic");
-        messageExt.setBornHost(RemotingUtil.string2SocketAddress("127.0.0.2:8888"));
-        messageExt.setStoreHost(RemotingUtil.string2SocketAddress("127.0.0.1:10911"));
+        messageExt.setBornHost(NetworkUtil.string2SocketAddress("127.0.0.2:8888"));
+        messageExt.setStoreHost(NetworkUtil.string2SocketAddress("127.0.0.1:10911"));
         messageExt.setBody(UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
         MessageClientIDSetter.setUniqID(messageExt);
         return messageExt;

@@ -46,12 +46,12 @@ import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader;
-import org.apache.rocketmq.common.protocol.route.BrokerData;
-import org.apache.rocketmq.common.protocol.route.QueueData;
-import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.common.topic.TopicValidator;
 import org.apache.rocketmq.remoting.exception.RemotingException;
+import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.route.BrokerData;
+import org.apache.rocketmq.remoting.protocol.route.QueueData;
+import org.apache.rocketmq.remoting.protocol.route.TopicRouteData;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -106,15 +106,16 @@ public class TransactionMQProducerWithTraceTest {
                 return LocalTransactionState.COMMIT_MESSAGE;
             }
         };
-        producer = new TransactionMQProducer(null, producerGroupTemp, null, true, null);
+        producer = new TransactionMQProducer(producerGroupTemp, null, true, null);
         producer.setTransactionListener(transactionListener);
 
         producer.setNamesrvAddr("127.0.0.1:9876");
         message = new Message(topic, new byte[] {'a', 'b', 'c'});
-        asyncTraceDispatcher = (AsyncTraceDispatcher) producer.getTraceDispatcher();
-        traceProducer = asyncTraceDispatcher.getTraceProducer();
 
         producer.start();
+
+        asyncTraceDispatcher = (AsyncTraceDispatcher) producer.getTraceDispatcher();
+        traceProducer = asyncTraceDispatcher.getTraceProducer();
 
         Field field = DefaultMQProducerImpl.class.getDeclaredField("mQClientFactory");
         field.setAccessible(true);

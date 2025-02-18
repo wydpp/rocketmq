@@ -30,14 +30,14 @@ import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.message.MessageDecoder;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
-import org.apache.rocketmq.common.protocol.NamespaceUtil;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
+import org.apache.rocketmq.remoting.protocol.NamespaceUtil;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
 
 /**
- * @deprecated Default pulling consumer. This class will be removed in 2022, and a better implementation {@link
- * DefaultLitePullConsumer} is recommend to use in the scenario of actively pulling messages.
+ * @deprecated Default pulling consumer. This class will be removed in 2022, and a better implementation
+ * {@link DefaultLitePullConsumer} is recommend to use in the scenario of actively pulling messages.
  */
 @Deprecated
 public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsumer {
@@ -89,23 +89,21 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     private int maxReconsumeTimes = 16;
 
     public DefaultMQPullConsumer() {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, null);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, null);
     }
 
     public DefaultMQPullConsumer(final String consumerGroup) {
-        this(null, consumerGroup, null);
+        this(consumerGroup, null);
     }
 
     public DefaultMQPullConsumer(RPCHook rpcHook) {
-        this(null, MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
+        this(MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);
     }
 
     public DefaultMQPullConsumer(final String consumerGroup, RPCHook rpcHook) {
-        this(null, consumerGroup, rpcHook);
-    }
-
-    public DefaultMQPullConsumer(final String namespace, final String consumerGroup) {
-        this(namespace, consumerGroup, null);
+        this.consumerGroup = consumerGroup;
+        this.enableStreamRequestType = true;
+        defaultMQPullConsumerImpl = new DefaultMQPullConsumerImpl(this, rpcHook);
     }
 
     /**
@@ -175,16 +173,6 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     @Override
     public long earliestMsgStoreTime(MessageQueue mq) throws MQClientException {
         return this.defaultMQPullConsumerImpl.earliestMsgStoreTime(queueWithNamespace(mq));
-    }
-
-    /**
-     * This method will be removed in a certain version after April 5, 2020, so please do not use this method.
-     */
-    @Deprecated
-    @Override
-    public MessageExt viewMessage(String offsetMsgId) throws RemotingException, MQBrokerException,
-        InterruptedException, MQClientException {
-        return this.defaultMQPullConsumerImpl.viewMessage(offsetMsgId);
     }
 
     /**
@@ -274,7 +262,7 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     public void sendMessageBack(MessageExt msg, int delayLevel)
         throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
         msg.setTopic(withNamespace(msg.getTopic()));
-        this.defaultMQPullConsumerImpl.sendMessageBack(msg, delayLevel, null);
+        this.defaultMQPullConsumerImpl.sendMessageBack(msg, delayLevel, msg.getBrokerName());
     }
 
     /**
@@ -388,6 +376,20 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
     }
 
     @Override
+    public void pullBlockIfNotFoundWithMessageSelector(MessageQueue mq, MessageSelector selector,
+        long offset, int maxNums,
+        PullCallback pullCallback) throws MQClientException, RemotingException, InterruptedException {
+        this.defaultMQPullConsumerImpl.pullBlockIfNotFoundWithMessageSelector(mq, selector, offset, maxNums, pullCallback);
+    }
+
+    @Override
+    public PullResult pullBlockIfNotFoundWithMessageSelector(MessageQueue mq, MessageSelector selector,
+        long offset,
+        int maxNums) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+        return this.defaultMQPullConsumerImpl.pullBlockIfNotFoundWithMessageSelector(mq, selector, offset, maxNums);
+    }
+
+    @Override
     public void updateConsumeOffset(MessageQueue mq, long offset) throws MQClientException {
         this.defaultMQPullConsumerImpl.updateConsumeOffset(queueWithNamespace(mq), offset);
     }
@@ -407,7 +409,7 @@ public class DefaultMQPullConsumer extends ClientConfig implements MQPullConsume
         String uniqKey) throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
         try {
             MessageDecoder.decodeMessageId(uniqKey);
-            return this.viewMessage(uniqKey);
+            return this.defaultMQPullConsumerImpl.viewMessage(topic, uniqKey);
         } catch (Exception e) {
             // Ignore
         }

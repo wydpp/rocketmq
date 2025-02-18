@@ -25,21 +25,22 @@ import org.apache.commons.cli.Options;
 import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.common.UtilAll;
-import org.apache.rocketmq.common.admin.RollbackStats;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
+import org.apache.rocketmq.remoting.protocol.admin.RollbackStats;
 import org.apache.rocketmq.tools.admin.DefaultMQAdminExt;
 import org.apache.rocketmq.tools.command.SubCommand;
 import org.apache.rocketmq.tools.command.SubCommandException;
 
 public class ResetOffsetByTimeOldCommand implements SubCommand {
 
-    public static void resetOffset(DefaultMQAdminExt defaultMQAdminExt, String consumerGroup, String topic,
+    public static void resetOffset(DefaultMQAdminExt defaultMQAdminExt, String clusterName, String consumerGroup,
+        String topic,
         long timestamp, boolean force, String timeStampStr)
         throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
 
         List<RollbackStats> rollbackStatsList =
-            defaultMQAdminExt.resetOffsetByTimestampOld(consumerGroup, topic, timestamp, force);
+            defaultMQAdminExt.resetOffsetByTimestampOld(clusterName, consumerGroup, topic, timestamp, force);
 
         System.out.printf("reset consumer offset by specified " +
                 "consumerGroup[%s], topic[%s], force[%s], timestamp(string)[%s], timestamp(long)[%s]%n",
@@ -93,6 +94,11 @@ public class ResetOffsetByTimeOldCommand implements SubCommand {
         opt = new Option("f", "force", true, "set the force rollback by timestamp switch[true|false]");
         opt.setRequired(false);
         options.addOption(opt);
+
+        opt = new Option("c", "cluster", true, "Cluster name or lmq parent topic, lmq is used to find the route.");
+        opt.setRequired(false);
+        options.addOption(opt);
+
         return options;
     }
 
@@ -104,6 +110,7 @@ public class ResetOffsetByTimeOldCommand implements SubCommand {
             String consumerGroup = commandLine.getOptionValue("g").trim();
             String topic = commandLine.getOptionValue("t").trim();
             String timeStampStr = commandLine.getOptionValue("s").trim();
+            String clusterName = commandLine.hasOption('c') ? commandLine.getOptionValue('c').trim() : null;
             long timestamp = 0;
             try {
                 timestamp = Long.parseLong(timeStampStr);
@@ -116,15 +123,14 @@ public class ResetOffsetByTimeOldCommand implements SubCommand {
                     System.out.printf("specified timestamp invalid.%n");
                     return;
                 }
-
-                boolean force = true;
-                if (commandLine.hasOption('f')) {
-                    force = Boolean.parseBoolean(commandLine.getOptionValue("f").trim());
-                }
-
-                defaultMQAdminExt.start();
-                resetOffset(defaultMQAdminExt, consumerGroup, topic, timestamp, force, timeStampStr);
             }
+
+            boolean force = true;
+            if (commandLine.hasOption('f')) {
+                force = Boolean.parseBoolean(commandLine.getOptionValue("f").trim());
+            }
+            defaultMQAdminExt.start();
+            resetOffset(defaultMQAdminExt, clusterName, consumerGroup, topic, timestamp, force, timeStampStr);
 
         } catch (Exception e) {
             throw new SubCommandException(this.getClass().getSimpleName() + " command failed", e);

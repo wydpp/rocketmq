@@ -27,15 +27,15 @@ import org.apache.rocketmq.common.message.MessageAccessor;
 import org.apache.rocketmq.common.message.MessageClientIDSetter;
 import org.apache.rocketmq.common.message.MessageConst;
 import org.apache.rocketmq.common.message.MessageExt;
-import org.apache.rocketmq.common.protocol.header.ExtraInfoUtil;
 import org.apache.rocketmq.proxy.common.ProxyContext;
-import org.apache.rocketmq.proxy.config.InitConfigAndLoggerTest;
+import org.apache.rocketmq.proxy.config.InitConfigTest;
 import org.apache.rocketmq.proxy.service.ServiceManager;
 import org.apache.rocketmq.proxy.service.message.MessageService;
 import org.apache.rocketmq.proxy.service.metadata.MetadataService;
 import org.apache.rocketmq.proxy.service.relay.ProxyRelayService;
 import org.apache.rocketmq.proxy.service.route.TopicRouteService;
 import org.apache.rocketmq.proxy.service.transaction.TransactionService;
+import org.apache.rocketmq.remoting.protocol.header.ExtraInfoUtil;
 import org.junit.Ignore;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -45,7 +45,7 @@ import static org.mockito.Mockito.when;
 
 @Ignore
 @RunWith(MockitoJUnitRunner.Silent.class)
-public class BaseProcessorTest extends InitConfigAndLoggerTest {
+public class BaseProcessorTest extends InitConfigTest {
     protected static final Random RANDOM = new Random();
 
     @Mock
@@ -66,14 +66,6 @@ public class BaseProcessorTest extends InitConfigAndLoggerTest {
     protected ProxyRelayService proxyRelayService;
     @Mock
     protected MetadataService metadataService;
-    @Mock
-    protected ProducerProcessor producerProcessor;
-    @Mock
-    protected ConsumerProcessor consumerProcessor;
-    @Mock
-    protected TransactionProcessor transactionProcessor;
-    @Mock
-    protected ClientProcessor clientProcessor;
 
     public void before() throws Throwable {
         super.before();
@@ -92,6 +84,13 @@ public class BaseProcessorTest extends InitConfigAndLoggerTest {
     }
 
     protected static MessageExt createMessageExt(String topic, String tags, int reconsumeTimes, long invisibleTime) {
+        return createMessageExt(topic, tags, reconsumeTimes, invisibleTime, System.currentTimeMillis(),
+            RANDOM.nextInt(Integer.MAX_VALUE), RANDOM.nextInt(Integer.MAX_VALUE), RANDOM.nextInt(Integer.MAX_VALUE),
+            RANDOM.nextInt(Integer.MAX_VALUE), "mockBroker");
+    }
+
+    protected static MessageExt createMessageExt(String topic, String tags, int reconsumeTimes, long invisibleTime, long popTime,
+        long startOffset, int reviveQid, int queueId, long queueOffset, String brokerName) {
         MessageExt messageExt = new MessageExt();
         messageExt.setTopic(topic);
         messageExt.setTags(tags);
@@ -100,8 +99,7 @@ public class BaseProcessorTest extends InitConfigAndLoggerTest {
         messageExt.setMsgId(MessageClientIDSetter.createUniqID());
         messageExt.setCommitLogOffset(RANDOM.nextInt(Integer.MAX_VALUE));
         MessageAccessor.putProperty(messageExt, MessageConst.PROPERTY_POP_CK,
-            ExtraInfoUtil.buildExtraInfo(RANDOM.nextInt(Integer.MAX_VALUE), System.currentTimeMillis(), invisibleTime,
-                RANDOM.nextInt(Integer.MAX_VALUE), topic, "mockBroker", RANDOM.nextInt(Integer.MAX_VALUE), RANDOM.nextInt(Integer.MAX_VALUE)));
+            ExtraInfoUtil.buildExtraInfo(startOffset, popTime, invisibleTime, reviveQid, topic, brokerName, queueId, queueOffset));
         return messageExt;
     }
 

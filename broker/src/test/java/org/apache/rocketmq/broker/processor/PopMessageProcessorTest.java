@@ -16,30 +16,32 @@
  */
 package org.apache.rocketmq.broker.processor;
 
-import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import java.net.InetSocketAddress;
+import io.netty.channel.embedded.EmbeddedChannel;
 import java.nio.ByteBuffer;
+import java.util.concurrent.CompletableFuture;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.broker.client.ClientChannelInfo;
 import org.apache.rocketmq.common.BrokerConfig;
+import org.apache.rocketmq.common.KeyBuilder;
 import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.common.constant.ConsumeInitMode;
 import org.apache.rocketmq.common.message.MessageDecoder;
-import org.apache.rocketmq.common.protocol.RequestCode;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.header.PopMessageRequestHeader;
-import org.apache.rocketmq.common.protocol.heartbeat.ConsumerData;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 import org.apache.rocketmq.remoting.netty.NettyClientConfig;
 import org.apache.rocketmq.remoting.netty.NettyServerConfig;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.RequestCode;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.header.PopMessageRequestHeader;
+import org.apache.rocketmq.remoting.protocol.heartbeat.ConsumerData;
 import org.apache.rocketmq.store.DefaultMessageStore;
 import org.apache.rocketmq.store.GetMessageResult;
 import org.apache.rocketmq.store.GetMessageStatus;
 import org.apache.rocketmq.store.SelectMappedBufferResult;
 import org.apache.rocketmq.store.config.MessageStoreConfig;
 import org.apache.rocketmq.store.logfile.DefaultMappedFile;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -53,7 +55,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -64,6 +66,7 @@ public class PopMessageProcessorTest {
     private BrokerController brokerController = new BrokerController(new BrokerConfig(), new NettyServerConfig(), new NettyClientConfig(), new MessageStoreConfig());
     @Mock
     private ChannelHandlerContext handlerContext;
+    private final EmbeddedChannel embeddedChannel = new EmbeddedChannel();
     @Mock
     private DefaultMessageStore messageStore;
     private ClientChannelInfo clientChannelInfo;
@@ -73,12 +76,11 @@ public class PopMessageProcessorTest {
     @Before
     public void init() {
         brokerController.setMessageStore(messageStore);
+        brokerController.getBrokerConfig().setEnablePopBufferMerge(true);
         popMessageProcessor = new PopMessageProcessor(brokerController);
-        Channel mockChannel = mock(Channel.class);
-        when(mockChannel.remoteAddress()).thenReturn(new InetSocketAddress(1024));
-        when(handlerContext.channel()).thenReturn(mockChannel);
-        brokerController.getTopicConfigManager().getTopicConfigTable().put(topic, new TopicConfig());
-        clientChannelInfo = new ClientChannelInfo(mockChannel);
+        when(handlerContext.channel()).thenReturn(embeddedChannel);
+        brokerController.getTopicConfigManager().getTopicConfigTable().put(topic, new TopicConfig(topic));
+        clientChannelInfo = new ClientChannelInfo(embeddedChannel);
         ConsumerData consumerData = createConsumerData(group, topic);
         brokerController.getConsumerManager().registerConsumer(
             consumerData.getGroupName(),
@@ -92,6 +94,7 @@ public class PopMessageProcessorTest {
 
     @Test
     public void testProcessRequest_TopicNotExist() throws RemotingCommandException {
+        when(messageStore.getMessageStoreConfig()).thenReturn(new MessageStoreConfig());
         brokerController.getTopicConfigManager().getTopicConfigTable().remove(topic);
         final RemotingCommand request = createPopMsgCommand();
         RemotingCommand response = popMessageProcessor.processRequest(handlerContext, request);
@@ -101,12 +104,14 @@ public class PopMessageProcessorTest {
     }
 
     @Test
-    public void testProcessRequest_Found() throws RemotingCommandException {
+    public void testProcessRequest_Found() throws RemotingCommandException, InterruptedException {
         GetMessageResult getMessageResult = createGetMessageResult(1);
-        when(messageStore.getMessage(anyString(), anyString(), anyInt(), anyLong(), anyInt(), any())).thenReturn(getMessageResult);
+        when(messageStore.getMessageStoreConfig()).thenReturn(new MessageStoreConfig());
+        when(messageStore.getMessageAsync(anyString(), anyString(), anyInt(), anyLong(), anyInt(), any())).thenReturn(CompletableFuture.completedFuture(getMessageResult));
 
         final RemotingCommand request = createPopMsgCommand();
-        RemotingCommand response = popMessageProcessor.processRequest(handlerContext, request);
+        popMessageProcessor.processRequest(handlerContext, request);
+        RemotingCommand response = embeddedChannel.readOutbound();
         assertThat(response).isNotNull();
         assertThat(response.getCode()).isEqualTo(ResponseCode.SUCCESS);
     }
@@ -115,10 +120,12 @@ public class PopMessageProcessorTest {
     public void testProcessRequest_MsgWasRemoving() throws RemotingCommandException {
         GetMessageResult getMessageResult = createGetMessageResult(1);
         getMessageResult.setStatus(GetMessageStatus.MESSAGE_WAS_REMOVING);
-        when(messageStore.getMessage(anyString(), anyString(), anyInt(), anyLong(), anyInt(), any())).thenReturn(getMessageResult);
+        when(messageStore.getMessageStoreConfig()).thenReturn(new MessageStoreConfig());
+        when(messageStore.getMessageAsync(anyString(), anyString(), anyInt(), anyLong(), anyInt(), any())).thenReturn(CompletableFuture.completedFuture(getMessageResult));
 
         final RemotingCommand request = createPopMsgCommand();
-        RemotingCommand response = popMessageProcessor.processRequest(handlerContext, request);
+        popMessageProcessor.processRequest(handlerContext, request);
+        RemotingCommand response = embeddedChannel.readOutbound();
         assertThat(response).isNotNull();
         assertThat(response.getCode()).isEqualTo(ResponseCode.SUCCESS);
     }
@@ -127,22 +134,90 @@ public class PopMessageProcessorTest {
     public void testProcessRequest_NoMsgInQueue() throws RemotingCommandException {
         GetMessageResult getMessageResult = createGetMessageResult(0);
         getMessageResult.setStatus(GetMessageStatus.NO_MESSAGE_IN_QUEUE);
-        when(messageStore.getMessage(anyString(), anyString(), anyInt(), anyLong(), anyInt(), any())).thenReturn(getMessageResult);
+        when(messageStore.getMessageStoreConfig()).thenReturn(new MessageStoreConfig());
+        when(messageStore.getMessageAsync(anyString(), anyString(), anyInt(), anyLong(), anyInt(), any())).thenReturn(CompletableFuture.completedFuture(getMessageResult));
 
         final RemotingCommand request = createPopMsgCommand();
         RemotingCommand response = popMessageProcessor.processRequest(handlerContext, request);
         assertThat(response).isNull();
     }
 
+    @Test
+    public void testProcessRequest_whenTimerWheelIsFalse() throws RemotingCommandException {
+        MessageStoreConfig messageStoreConfig = new MessageStoreConfig();
+        messageStoreConfig.setTimerWheelEnable(false);
+        when(messageStore.getMessageStoreConfig()).thenReturn(messageStoreConfig);
+        final RemotingCommand request = createPopMsgCommand();
+        RemotingCommand response = popMessageProcessor.processRequest(handlerContext, request);
+        assertThat(response).isNotNull();
+        assertThat(response.getCode()).isEqualTo(ResponseCode.SYSTEM_ERROR);
+        assertThat(response.getRemark()).contains("pop message is forbidden because timerWheelEnable is false");
+    }
+
+    @Test
+    public void testGetInitOffset_retryTopic() throws RemotingCommandException {
+        when(messageStore.getMessageStoreConfig()).thenReturn(new MessageStoreConfig());
+        String newGroup = group + "-" + System.currentTimeMillis();
+        String retryTopic = KeyBuilder.buildPopRetryTopic(topic, newGroup);
+        long minOffset = 100L;
+        when(messageStore.getMinOffsetInQueue(retryTopic, 0)).thenReturn(minOffset);
+        brokerController.getTopicConfigManager().getTopicConfigTable().put(retryTopic, new TopicConfig(retryTopic, 1, 1));
+        GetMessageResult getMessageResult = createGetMessageResult(0);
+        when(messageStore.getMessageAsync(eq(newGroup), anyString(), anyInt(), anyLong(), anyInt(), any()))
+                .thenReturn(CompletableFuture.completedFuture(getMessageResult));
+
+        long offset = brokerController.getConsumerOffsetManager().queryOffset(newGroup, retryTopic, 0);
+        Assert.assertEquals(-1, offset);
+
+        RemotingCommand request = createPopMsgCommand(newGroup, topic, 0, ConsumeInitMode.MAX);
+        popMessageProcessor.processRequest(handlerContext, request);
+        offset = brokerController.getConsumerOffsetManager().queryOffset(newGroup, retryTopic, 0);
+        Assert.assertEquals(minOffset, offset);
+
+        when(messageStore.getMinOffsetInQueue(retryTopic, 0)).thenReturn(minOffset * 2);
+        popMessageProcessor.processRequest(handlerContext, request);
+        offset = brokerController.getConsumerOffsetManager().queryOffset(newGroup, retryTopic, 0);
+        Assert.assertEquals(minOffset, offset); // will not entry getInitOffset() again
+        messageStore.getMinOffsetInQueue(retryTopic, 0); // prevent UnnecessaryStubbingException
+    }
+
+    @Test
+    public void testGetInitOffset_normalTopic() throws RemotingCommandException {
+        long maxOffset = 999L;
+        when(messageStore.getMessageStoreConfig()).thenReturn(new MessageStoreConfig());
+        when(messageStore.getMaxOffsetInQueue(topic, 0)).thenReturn(maxOffset);
+        String newGroup = group + "-" + System.currentTimeMillis();
+        GetMessageResult getMessageResult = createGetMessageResult(0);
+        when(messageStore.getMessageAsync(eq(newGroup), anyString(), anyInt(), anyLong(), anyInt(), any()))
+                .thenReturn(CompletableFuture.completedFuture(getMessageResult));
+
+        long offset = brokerController.getConsumerOffsetManager().queryOffset(newGroup, topic, 0);
+        Assert.assertEquals(-1, offset);
+
+        RemotingCommand request = createPopMsgCommand(newGroup, topic, 0, ConsumeInitMode.MAX);
+        popMessageProcessor.processRequest(handlerContext, request);
+        offset = brokerController.getConsumerOffsetManager().queryOffset(newGroup, topic, 0);
+        Assert.assertEquals(maxOffset - 1, offset); // checkInMem return false
+
+        when(messageStore.getMaxOffsetInQueue(topic, 0)).thenReturn(maxOffset * 2);
+        popMessageProcessor.processRequest(handlerContext, request);
+        offset = brokerController.getConsumerOffsetManager().queryOffset(newGroup, topic, 0);
+        Assert.assertEquals(maxOffset - 1, offset); // will not entry getInitOffset() again
+        messageStore.getMaxOffsetInQueue(topic, 0); // prevent UnnecessaryStubbingException
+    }
 
     private RemotingCommand createPopMsgCommand() {
+        return createPopMsgCommand(group, topic, -1, ConsumeInitMode.MAX);
+    }
+
+    private RemotingCommand createPopMsgCommand(String group, String topic, int queueId, int initMode) {
         PopMessageRequestHeader requestHeader = new PopMessageRequestHeader();
         requestHeader.setConsumerGroup(group);
         requestHeader.setMaxMsgNums(30);
-        requestHeader.setQueueId(-1);
+        requestHeader.setQueueId(queueId);
         requestHeader.setTopic(topic);
         requestHeader.setInvisibleTime(10_000);
-        requestHeader.setInitMode(ConsumeInitMode.MAX);
+        requestHeader.setInitMode(initMode);
         requestHeader.setOrder(false);
         requestHeader.setPollTime(15_000);
         requestHeader.setBornTime(System.currentTimeMillis());
@@ -150,7 +225,6 @@ public class PopMessageProcessorTest {
         request.makeCustomHeaderToNet();
         return request;
     }
-
 
     private GetMessageResult createGetMessageResult(int msgCnt) {
         GetMessageResult getMessageResult = new GetMessageResult();

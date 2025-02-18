@@ -21,17 +21,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-
 import org.apache.commons.lang3.StringUtils;
 import org.apache.rocketmq.common.MixAll;
-import org.apache.rocketmq.common.protocol.RequestCode;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.route.BrokerData;
-import org.apache.rocketmq.common.protocol.route.QueueData;
-import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
+import org.apache.rocketmq.remoting.protocol.RequestCode;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.route.BrokerData;
+import org.apache.rocketmq.remoting.protocol.route.QueueData;
+import org.apache.rocketmq.remoting.protocol.route.TopicRouteData;
 
 public class ZoneRouteRPCHook implements RPCHook {
 
@@ -57,14 +56,16 @@ public class ZoneRouteRPCHook implements RPCHook {
             return;
         }
         TopicRouteData topicRouteData = RemotingSerializable.decode(response.getBody(), TopicRouteData.class);
-
         response.setBody(filterByZoneName(topicRouteData, zoneName).encode());
     }
-    
+
     private TopicRouteData filterByZoneName(TopicRouteData topicRouteData, String zoneName) {
         List<BrokerData> brokerDataReserved = new ArrayList<>();
         Map<String, BrokerData> brokerDataRemoved = new HashMap<>();
         for (BrokerData brokerData : topicRouteData.getBrokerDatas()) {
+            if (brokerData.getBrokerAddrs() == null) {
+                continue;
+            }
             //master down, consume from slave. break nearby route rule.
             if (brokerData.getBrokerAddrs().get(MixAll.MASTER_ID) == null
                 || StringUtils.equalsIgnoreCase(brokerData.getZoneName(), zoneName)) {
@@ -86,9 +87,6 @@ public class ZoneRouteRPCHook implements RPCHook {
         if (topicRouteData.getFilterServerTable() != null && !topicRouteData.getFilterServerTable().isEmpty()) {
             for (Entry<String, BrokerData> entry : brokerDataRemoved.entrySet()) {
                 BrokerData brokerData = entry.getValue();
-                if (brokerData.getBrokerAddrs() == null) {
-                    continue;
-                }
                 brokerData.getBrokerAddrs().values()
                     .forEach(brokerAddr -> topicRouteData.getFilterServerTable().remove(brokerAddr));
             }

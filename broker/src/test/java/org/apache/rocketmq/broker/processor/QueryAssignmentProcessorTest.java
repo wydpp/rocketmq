@@ -19,8 +19,10 @@ package org.apache.rocketmq.broker.processor;
 import com.google.common.collect.ImmutableSet;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.apache.rocketmq.broker.BrokerController;
 import org.apache.rocketmq.broker.client.ClientChannelInfo;
 import org.apache.rocketmq.broker.topic.TopicRouteInfoManager;
@@ -33,17 +35,17 @@ import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.common.message.MessageRequestMode;
-import org.apache.rocketmq.common.protocol.RequestCode;
-import org.apache.rocketmq.common.protocol.ResponseCode;
-import org.apache.rocketmq.common.protocol.body.QueryAssignmentRequestBody;
-import org.apache.rocketmq.common.protocol.body.QueryAssignmentResponseBody;
-import org.apache.rocketmq.common.protocol.body.SetMessageRequestModeRequestBody;
-import org.apache.rocketmq.common.protocol.heartbeat.ConsumerData;
-import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
 import org.apache.rocketmq.remoting.netty.NettyClientConfig;
 import org.apache.rocketmq.remoting.netty.NettyServerConfig;
 import org.apache.rocketmq.remoting.protocol.LanguageCode;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.remoting.protocol.RequestCode;
+import org.apache.rocketmq.remoting.protocol.ResponseCode;
+import org.apache.rocketmq.remoting.protocol.body.QueryAssignmentRequestBody;
+import org.apache.rocketmq.remoting.protocol.body.QueryAssignmentResponseBody;
+import org.apache.rocketmq.remoting.protocol.body.SetMessageRequestModeRequestBody;
+import org.apache.rocketmq.remoting.protocol.heartbeat.ConsumerData;
+import org.apache.rocketmq.remoting.protocol.heartbeat.MessageModel;
 import org.apache.rocketmq.store.MessageStore;
 import org.apache.rocketmq.store.config.MessageStoreConfig;
 import org.junit.Assert;
@@ -124,6 +126,24 @@ public class QueryAssignmentProcessorTest {
         final RemotingCommand request = createSetMessageRequestModeRequest(MixAll.RETRY_GROUP_TOPIC_PREFIX + topic);
         RemotingCommand responseToReturn = queryAssignmentProcessor.processRequest(handlerContext, request);
         assertThat(responseToReturn.getCode()).isEqualTo(ResponseCode.NO_PERMISSION);
+    }
+
+    @Test
+    public void testDoLoadBalance() throws Exception {
+        Method method = queryAssignmentProcessor.getClass()
+            .getDeclaredMethod("doLoadBalance", String.class, String.class, String.class, MessageModel.class,
+                String.class, SetMessageRequestModeRequestBody.class, ChannelHandlerContext.class);
+        method.setAccessible(true);
+
+        Set<MessageQueue> mqs1 = (Set<MessageQueue>) method.invoke(
+            queryAssignmentProcessor, MixAll.LMQ_PREFIX + topic, group, "127.0.0.1", MessageModel.CLUSTERING,
+            new AllocateMessageQueueAveragely().getName(), new SetMessageRequestModeRequestBody(), handlerContext);
+        Set<MessageQueue> mqs2 = (Set<MessageQueue>) method.invoke(
+            queryAssignmentProcessor, MixAll.LMQ_PREFIX + topic, group, "127.0.0.2", MessageModel.CLUSTERING,
+            new AllocateMessageQueueAveragely().getName(), new SetMessageRequestModeRequestBody(), handlerContext);
+
+        assertThat(mqs1).hasSize(1);
+        assertThat(mqs2).isEmpty();
     }
 
     @Test

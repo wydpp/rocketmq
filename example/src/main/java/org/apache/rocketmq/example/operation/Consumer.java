@@ -19,11 +19,11 @@ package org.apache.rocketmq.example.operation;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.cli.PosixParser;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyContext;
 import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
@@ -36,15 +36,15 @@ public class Consumer {
     public static void main(String[] args) throws MQClientException {
         CommandLine commandLine = buildCommandline(args);
         if (commandLine != null) {
-            String group = commandLine.getOptionValue('g');
+            String subGroup = commandLine.getOptionValue('g');
             String topic = commandLine.getOptionValue('t');
-            String subscription = commandLine.getOptionValue('s');
+            String subExpression = commandLine.getOptionValue('s');
             final String returnFailedHalf = commandLine.getOptionValue('f');
 
-            DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
+            DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(subGroup);
             consumer.setInstanceName(Long.toString(System.currentTimeMillis()));
 
-            consumer.subscribe(topic, subscription);
+            consumer.subscribe(topic, subExpression);
 
             consumer.registerMessageListener(new MessageListenerConcurrently() {
                 AtomicLong consumeTimes = new AtomicLong(0);
@@ -91,7 +91,7 @@ public class Consumer {
         opt.setRequired(true);
         options.addOption(opt);
 
-        PosixParser parser = new PosixParser();
+        DefaultParser parser = new DefaultParser();
         HelpFormatter hf = new HelpFormatter();
         hf.setWidth(110);
         CommandLine commandLine = null;
